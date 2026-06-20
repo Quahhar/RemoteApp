@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'state/app_providers.dart';
+import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 import 'ui/home_shell.dart';
 
@@ -25,9 +26,13 @@ class RemoteApp extends StatelessWidget {
     return MaterialApp(
       title: 'Remote',
       debugShowCheckedModeBanner: false,
-      theme: AppTheme.dark,
-      darkTheme: AppTheme.dark,
-      themeMode: ThemeMode.dark,
+      theme: AppTheme.light,
+      // Paint the gradient behind every route so transparent scaffolds, dialogs,
+      // and the Settings page all share the mockup background.
+      builder: (context, child) => DecoratedBox(
+        decoration: const BoxDecoration(gradient: AppColors.backgroundGradient),
+        child: child,
+      ),
       home: const HomeShell(),
     );
   }

@@ -45,6 +45,8 @@ dependencies:
   web_socket_channel: ^3.0.3
   # Wi-Fi subnet detection for active network scans (protocols without multicast).
   network_info_plus: ^8.1.0
+  # Poppins typeface used by the design mockups.
+  google_fonts: ^8.1.0
 
 dev_dependencies:
   flutter_test:

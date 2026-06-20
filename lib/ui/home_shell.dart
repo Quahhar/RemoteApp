@@ -4,15 +4,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/active_device_provider.dart';
+import '../theme/app_colors.dart';
 import 'screens/devices_screen.dart';
 import 'screens/keyboard_screen.dart';
 import 'screens/remote_screen.dart';
-import 'screens/settings_screen.dart';
 import 'screens/touchpad_screen.dart';
-import 'widgets/connection_indicator.dart';
 
-/// Top-level shell: a 3-tab NavigationBar (Remote / Devices / Touchpad) with a
-/// persistent connection indicator and a Settings gear in the AppBar.
+/// Top-level shell. The background gradient is painted app-wide in `main`; here
+/// we host the tab bodies and a frosted bottom nav matching the mockup. The
+/// Settings gear lives in the Remote screen's own header (per the design).
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
@@ -23,18 +23,13 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   int _index = 0;
 
-  static const _titles = ['Remote', 'Devices', 'Touchpad', 'Keyboard'];
-
   @override
   void initState() {
     super.initState();
-    // Reconnect to the previously-active device once the tree is ready.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (ref.read(activeDeviceProvider) != null) {
         unawaited(
-          ref.read(activeDeviceProvider.notifier).connect().catchError((_) {
-            // Status stream reflects the failure; nothing to surface on boot.
-          }),
+          ref.read(activeDeviceProvider.notifier).connect().catchError((_) {}),
         );
       }
     });
@@ -43,56 +38,112 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_titles[_index]),
-        actions: [
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 4),
-            child: Center(child: ConnectionIndicator()),
-          ),
-          IconButton(
-            tooltip: 'Settings',
-            icon: const Icon(Icons.settings_outlined),
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SettingsScreen()),
-            ),
-          ),
-        ],
-      ),
+      backgroundColor: Colors.transparent,
       body: IndexedStack(
         index: _index,
         children: const [
           RemoteScreen(),
-          DevicesScreen(),
           TouchpadScreen(),
+          DevicesScreen(),
           KeyboardScreen(),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.gamepad_outlined),
-            selectedIcon: Icon(Icons.gamepad),
-            label: 'Remote',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.devices_outlined),
-            selectedIcon: Icon(Icons.devices),
-            label: 'Devices',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.touch_app_outlined),
-            selectedIcon: Icon(Icons.touch_app),
-            label: 'Touchpad',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.keyboard_outlined),
-            selectedIcon: Icon(Icons.keyboard),
-            label: 'Keyboard',
+      bottomNavigationBar: _FrostedNavBar(
+        currentIndex: _index,
+        onSelect: (i) => setState(() => _index = i),
+        items: const [
+          _NavItem(Icons.settings_remote, 'Remote'),
+          _NavItem(Icons.touch_app, 'Touchpad'),
+          _NavItem(Icons.devices, 'Devices'),
+          _NavItem(Icons.keyboard, 'Keyboard'),
+        ],
+      ),
+    );
+  }
+}
+
+class _NavItem {
+  const _NavItem(this.icon, this.label);
+  final IconData icon;
+  final String label;
+}
+
+class _FrostedNavBar extends StatelessWidget {
+  const _FrostedNavBar({
+    required this.items,
+    required this.currentIndex,
+    required this.onSelect,
+  });
+
+  final List<_NavItem> items;
+  final int currentIndex;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppColors.navBar,
+        border: Border(top: BorderSide(color: Color(0x99FFFFFF))),
+        boxShadow: [
+          BoxShadow(
+            color: Color(0x1A463778),
+            blurRadius: 24,
+            offset: Offset(0, -6),
           ),
         ],
+      ),
+      padding: EdgeInsets.only(top: 12, bottom: 12 + bottomInset, left: 10, right: 10),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          for (var i = 0; i < items.length; i++)
+            _NavButton(
+              item: items[i],
+              selected: i == currentIndex,
+              onTap: () => onSelect(i),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NavButton extends StatelessWidget {
+  const _NavButton({
+    required this.item,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final _NavItem item;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = selected ? AppColors.accent : AppColors.textMuted;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(item.icon, size: 28, color: color),
+            const SizedBox(height: 5),
+            Text(
+              item.label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

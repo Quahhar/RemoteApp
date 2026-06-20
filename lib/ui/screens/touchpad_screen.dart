@@ -7,6 +7,7 @@ import '../../models/remote_key.dart';
 import '../../state/active_device_provider.dart';
 import '../remote_actions.dart';
 import '../widgets/remote_button.dart';
+import '../widgets/screen_header.dart';
 
 /// Gesture surface. When the active controller advertises a pointer it drives
 /// `movePointer`/`click`; otherwise it translates swipes into D-pad keys and a
@@ -20,18 +21,16 @@ class TouchpadScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.watch(activeControllerProvider);
 
+    final Widget body;
     if (controller == null) {
-      return const _Centered(
+      body = const _Centered(
         icon: Icons.touch_app_outlined,
         text: 'Select a device to use the touchpad.',
       );
-    }
-
-    final pointer = controller.capabilities.supportsPointer;
-
-    return SafeArea(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
+    } else {
+      final pointer = controller.capabilities.supportsPointer;
+      body = Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
         child: Column(
           children: [
             Expanded(
@@ -48,6 +47,16 @@ class TouchpadScreen extends ConsumerWidget {
             _MediaControls(onKey: (key) => pressKey(context, ref, key)),
           ],
         ),
+      );
+    }
+
+    return SafeArea(
+      bottom: false,
+      child: Column(
+        children: [
+          const ScreenHeader('Touchpad'),
+          Expanded(child: body),
+        ],
       ),
     );
   }

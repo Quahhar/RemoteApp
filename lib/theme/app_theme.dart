@@ -1,37 +1,37 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
-/// App-wide dark theme. Colors are intentionally conservative here; the Remote
-/// screen will be retuned to match the supplied design mockup.
+import 'app_colors.dart';
+
+/// Light, glassy theme matching the design mockups. The scaffold is transparent
+/// so the app-wide [AppColors.backgroundGradient] (painted in `main`'s builder)
+/// shows through every route.
 class AppTheme {
   AppTheme._();
 
-  static const Color seed = Color(0xFF7C4DFF);
-  static const Color _bg = Color(0xFF0E0E12);
-  static const Color _surface = Color(0xFF16161D);
-
-  static ThemeData get dark {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: seed,
-      brightness: Brightness.dark,
-    ).copyWith(surface: _surface);
-
-    return ThemeData(
+  static ThemeData get light {
+    final base = ThemeData(
       useMaterial3: true,
-      brightness: Brightness.dark,
-      colorScheme: scheme,
-      scaffoldBackgroundColor: _bg,
+      brightness: Brightness.light,
+      scaffoldBackgroundColor: Colors.transparent,
+      colorScheme: ColorScheme.fromSeed(
+        seedColor: AppColors.accent,
+        brightness: Brightness.light,
+      ).copyWith(onSurface: AppColors.textPrimary),
+    );
+
+    return base.copyWith(
+      textTheme: GoogleFonts.poppinsTextTheme(base.textTheme).apply(
+        bodyColor: AppColors.textPrimary,
+        displayColor: AppColors.textPrimary,
+      ),
       appBarTheme: const AppBarTheme(
-        backgroundColor: _bg,
+        backgroundColor: Colors.transparent,
         elevation: 0,
-        centerTitle: false,
+        scrolledUnderElevation: 0,
+        foregroundColor: AppColors.textPrimary,
       ),
-      navigationBarTheme: NavigationBarThemeData(
-        backgroundColor: _surface,
-        indicatorColor: seed.withValues(alpha: 0.24),
-        labelTextStyle: WidgetStateProperty.all(
-          const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-        ),
-      ),
+      snackBarTheme: const SnackBarThemeData(behavior: SnackBarBehavior.floating),
     );
   }
 }

@@ -17,13 +17,16 @@ void main() {
     );
     await tester.pump();
 
-    // Navigation destinations are present.
-    expect(find.text('Remote'), findsWidgets); // AppBar title + nav label
+    // The Remote screen header from the mockup.
+    expect(find.text('Remote Control'), findsOneWidget);
+
+    // Frosted bottom-nav destinations are present.
+    expect(find.text('Remote'), findsOneWidget);
     expect(find.text('Devices'), findsOneWidget);
     expect(find.text('Touchpad'), findsOneWidget);
     expect(find.text('Keyboard'), findsOneWidget);
 
-    // With nothing saved, the Remote tab shows the empty-state hint.
+    // With nothing saved, the device card shows the empty state.
     expect(find.textContaining('No TV selected'), findsOneWidget);
   });
 }

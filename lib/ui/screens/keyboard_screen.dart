@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../controllers/remote_controller.dart';
 import '../../controllers/text_input.dart';
 import '../../state/active_device_provider.dart';
+import '../widgets/screen_header.dart';
 
 /// On-screen keyboard. While the field is focused, typed and pasted text is
 /// routed to the active controller via `sendText`; deletions become backspaces
@@ -119,21 +120,19 @@ class _KeyboardScreenState extends ConsumerState<KeyboardScreen> {
     final controller = ref.watch(activeControllerProvider);
     final scheme = Theme.of(context).colorScheme;
 
+    final Widget body;
     if (controller == null) {
-      return const _Centered(
+      body = const _Centered(
         icon: Icons.keyboard_outlined,
         text: 'Select a device to use the keyboard.',
       );
-    }
-    if (!controller.capabilities.supportsTextInput) {
-      return const _Centered(
+    } else if (!controller.capabilities.supportsTextInput) {
+      body = const _Centered(
         icon: Icons.keyboard_hide_outlined,
         text: 'Keyboard not supported on this device.',
       );
-    }
-
-    return SafeArea(
-      child: Padding(
+    } else {
+      body = Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -181,6 +180,16 @@ class _KeyboardScreenState extends ConsumerState<KeyboardScreen> {
             ),
           ],
         ),
+      );
+    }
+
+    return SafeArea(
+      bottom: false,
+      child: Column(
+        children: [
+          const ScreenHeader('Keyboard'),
+          Expanded(child: body),
+        ],
       ),
     );
   }
