@@ -42,8 +42,15 @@ class ActiveDeviceNotifier extends Notifier<Device?> {
   Future<void> connect() async {
     final device = state;
     if (device == null) return;
-    await _registry.controllerFor(device.protocol).connect(device);
-    final updated = device.copyWith(lastConnected: DateTime.now());
+    final controller = _registry.controllerFor(device.protocol);
+    await controller.connect(device);
+    // Persist a freshly-obtained pairing credential (LG/Samsung/Android TV) so
+    // the next connect skips the on-TV prompt.
+    final credential = controller.authToken;
+    var updated = device.copyWith(lastConnected: DateTime.now());
+    if (credential != null && credential != device.authToken) {
+      updated = updated.copyWith(authToken: credential);
+    }
     state = updated;
     await ref.read(savedDevicesProvider.notifier).upsert(updated);
   }

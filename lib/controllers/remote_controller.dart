@@ -29,6 +29,12 @@ abstract class RemoteController {
   /// Current ambient connection state.
   ConnectionStatus get status => _status;
 
+  /// Credential obtained during the most recent successful pairing/connect
+  /// (LG client-key, Samsung token, Android TV cert) — null when none applies.
+  /// After [connect], the app persists this back onto the [Device] so the next
+  /// session skips the on-TV pairing prompt.
+  String? get authToken => null;
+
   /// Broadcast of connection-state changes. Replays nothing; read [status] for
   /// the current value on subscribe.
   Stream<ConnectionStatus> get statusStream => _statusController.stream;
