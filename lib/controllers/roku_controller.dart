@@ -11,6 +11,7 @@ import '../models/device.dart';
 import '../models/protocol_type.dart';
 import '../models/remote_key.dart';
 import 'remote_controller.dart';
+import 'text_input.dart';
 
 /// Roku — the proof-of-concept protocol.
 ///
@@ -67,8 +68,8 @@ class RokuController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        pointer: false,
-        textInput: true, // Roku supports Lit_ literal-character keypresses
+        supportsPointer: false, // Roku ECP has no pointer
+        supportsTextInput: true, // via Lit_ literal-character keypresses
         channelButtons: true,
         numberPad: false,
       );
@@ -237,6 +238,38 @@ class RokuController extends RemoteController {
       throw RemoteException('Unsupported key: ${key.name}');
     }
     await _postWithRetry(_uri(device, '/keypress/$name'));
+  }
+
+  @override
+  Future<void> sendText(String text) async {
+    final device = _device;
+    if (device == null) {
+      throw const RemoteException('No active Roku device');
+    }
+    for (final key in textKeyNames(text)) {
+      await _postWithRetry(_uri(device, '/keypress/$key'));
+    }
+  }
+
+  /// The ordered ECP keypress names for [text]: one `Lit_<urlencoded char>` per
+  /// printable character, plus `Enter`/`Backspace` for edit keys. Pure +
+  /// exposed for unit tests.
+  @visibleForTesting
+  static List<String> textKeyNames(String text) {
+    final keys = <String>[];
+    for (final segment in tokenizeInput(text)) {
+      switch (segment) {
+        case TextRun(:final text):
+          for (final rune in text.runes) {
+            keys.add('Lit_${Uri.encodeComponent(String.fromCharCode(rune))}');
+          }
+        case TextEdit(key: TextEditKey.enter):
+          keys.add('Enter');
+        case TextEdit(key: TextEditKey.backspace):
+          keys.add('Backspace');
+      }
+    }
+    return keys;
   }
 
   /// POST with one retry on transient transport errors, honoring the timeout.

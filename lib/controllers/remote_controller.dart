@@ -13,8 +13,9 @@ import '../models/remote_key.dart';
 ///
 /// Subclasses get status-stream plumbing for free: call [emitStatus] to push
 /// state, and the base manages the broadcast controller + [dispose]. Pointer
-/// methods default to throwing [UnsupportedError]; controllers that set
-/// [Capabilities.pointer] override them.
+/// and text methods default to throwing [UnsupportedError]; controllers that
+/// declare [Capabilities.supportsPointer] / [Capabilities.supportsTextInput]
+/// override them.
 abstract class RemoteController {
   final StreamController<ConnectionStatus> _statusController =
       StreamController<ConnectionStatus>.broadcast();
@@ -61,11 +62,19 @@ abstract class RemoteController {
   /// Send a single button press to the connected device.
   Future<void> sendKey(RemoteKey key);
 
-  /// Relative pointer move (touchpad). Override when [Capabilities.pointer].
+  /// Send text to a focused input on the TV. The string may contain newline
+  /// (enter) and BS/DEL (backspace) control characters, which are routed to the
+  /// protocol's native enter/backspace. Override when
+  /// [Capabilities.supportsTextInput]; the default throws [UnsupportedError].
+  Future<void> sendText(String text) =>
+      throw UnsupportedError('${protocol.label} does not support text input');
+
+  /// Relative pointer move (touchpad). Override when
+  /// [Capabilities.supportsPointer]; the default throws [UnsupportedError].
   Future<void> movePointer(double dx, double dy) =>
       throw UnsupportedError('${protocol.label} does not support pointer input');
 
-  /// Pointer click/tap. Override when [Capabilities.pointer].
+  /// Pointer click/tap. Override when [Capabilities.supportsPointer].
   Future<void> click() =>
       throw UnsupportedError('${protocol.label} does not support pointer input');
 

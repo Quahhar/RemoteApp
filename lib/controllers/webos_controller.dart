@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -12,6 +13,7 @@ import '../models/protocol_type.dart';
 import '../models/remote_key.dart';
 import 'remote_controller.dart';
 import 'ssdp.dart';
+import 'text_input.dart';
 
 /// LG webOS via SSAP over WebSocket (`ws://{host}:3000`).
 ///
@@ -75,8 +77,8 @@ class WebosController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        pointer: true, // Magic Remote pointer via the input socket
-        textInput: true,
+        supportsPointer: true, // Magic Remote pointer via the input socket
+        supportsTextInput: true, // webOS IME requests
         channelButtons: true,
         numberPad: true,
       );
@@ -266,11 +268,57 @@ class WebosController extends RemoteController {
     input.sink.add('type:click\n\n');
   }
 
-  Future<Map<String, dynamic>> _request(String uri) async {
+  @override
+  Future<void> sendText(String text) async {
+    if (_main == null) throw const RemoteException('Not connected');
+    for (final req in imeRequests(text)) {
+      await _request(req.uri, payload: req.payload);
+    }
+  }
+
+  /// The ordered webOS IME requests for [text]: one `insertText` per printable
+  /// run (batched), plus `sendEnterKey` / `deleteCharacters` for edit keys.
+  /// Pure + exposed for unit tests.
+  @visibleForTesting
+  static List<({String uri, Map<String, dynamic>? payload})> imeRequests(
+    String text,
+  ) {
+    final requests = <({String uri, Map<String, dynamic>? payload})>[];
+    for (final segment in tokenizeInput(text)) {
+      switch (segment) {
+        case TextRun(:final text):
+          requests.add((
+            uri: 'ssap://com.webos.service.ime/insertText',
+            payload: {'text': text, 'replace': 0},
+          ));
+        case TextEdit(key: TextEditKey.enter):
+          requests.add((
+            uri: 'ssap://com.webos.service.ime/sendEnterKey',
+            payload: null,
+          ));
+        case TextEdit(key: TextEditKey.backspace):
+          requests.add((
+            uri: 'ssap://com.webos.service.ime/deleteCharacters',
+            payload: {'count': 1},
+          ));
+      }
+    }
+    return requests;
+  }
+
+  Future<Map<String, dynamic>> _request(
+    String uri, {
+    Map<String, dynamic>? payload,
+  }) async {
     final id = 'req_${_msgId++}';
     final completer = Completer<Map<String, dynamic>>();
     _pending[id] = completer;
-    _send(_main!, {'type': 'request', 'id': id, 'uri': uri});
+    _send(_main!, {
+      'type': 'request',
+      'id': id,
+      'uri': uri,
+      'payload': ?payload,
+    });
     return completer.future.timeout(
       connectTimeout,
       onTimeout: () {

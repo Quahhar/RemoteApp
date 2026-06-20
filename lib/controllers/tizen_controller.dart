@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
@@ -13,6 +14,7 @@ import '../models/protocol_type.dart';
 import '../models/remote_key.dart';
 import 'remote_controller.dart';
 import 'ssdp.dart';
+import 'text_input.dart';
 
 /// Samsung Tizen via the `samsung.remote.control` WebSocket channel.
 ///
@@ -60,23 +62,54 @@ class TizenController extends RemoteController {
   };
 
   /// The JSON frame Samsung expects for a key press. Pure + exposed for tests.
-  static String commandFor(RemoteKey key) => jsonEncode({
+  static String commandFor(RemoteKey key) => keyFrame(keyCodes[key]!);
+
+  /// A raw `SendRemoteKey` frame for an arbitrary Samsung key code.
+  static String keyFrame(String keyCode) => jsonEncode({
         'method': 'ms.remote.control',
         'params': {
           'Cmd': 'Click',
-          'DataOfCmd': keyCodes[key],
+          'DataOfCmd': keyCode,
           'Option': 'false',
           'TypeOfRemote': 'SendRemoteKey',
         },
       });
+
+  /// A `SendInputString` frame carrying base64-encoded text for the on-TV IME.
+  static String inputStringFrame(String text) => jsonEncode({
+        'method': 'ms.remote.control',
+        'params': {
+          'Cmd': base64.encode(utf8.encode(text)),
+          'DataOfCmd': 'base64',
+          'TypeOfRemote': 'SendInputString',
+        },
+      });
+
+  /// Ordered wire frames for [text]: a `SendInputString` per printable run,
+  /// plus `KEY_ENTER` / `KEY_DELETE` for edit keys. Pure + exposed for tests.
+  @visibleForTesting
+  static List<String> inputFrames(String text) {
+    final frames = <String>[];
+    for (final segment in tokenizeInput(text)) {
+      switch (segment) {
+        case TextRun(:final text):
+          frames.add(inputStringFrame(text));
+        case TextEdit(key: TextEditKey.enter):
+          frames.add(keyFrame('KEY_ENTER'));
+        case TextEdit(key: TextEditKey.backspace):
+          frames.add(keyFrame('KEY_DELETE'));
+      }
+    }
+    return frames;
+  }
 
   @override
   ProtocolType get protocol => ProtocolType.tizen;
 
   @override
   Capabilities get capabilities => const Capabilities(
-        pointer: false,
-        textInput: true,
+        supportsPointer: false,
+        supportsTextInput: true, // SendInputString, where the model's IME allows
         channelButtons: true,
         numberPad: true,
       );
@@ -215,6 +248,15 @@ class TizenController extends RemoteController {
     final channel = _channel;
     if (channel == null) throw const RemoteException('Not connected');
     channel.sink.add(commandFor(key));
+  }
+
+  @override
+  Future<void> sendText(String text) async {
+    final channel = _channel;
+    if (channel == null) throw const RemoteException('Not connected');
+    for (final frame in inputFrames(text)) {
+      channel.sink.add(frame);
+    }
   }
 
   void _fail() {

@@ -47,8 +47,8 @@ class AndroidTvController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        pointer: false,
-        textInput: true,
+        supportsPointer: true, // protocol supports pointer (once paired)
+        supportsTextInput: true, // protocol supports text (once paired)
         channelButtons: true,
         numberPad: true,
       );
@@ -71,6 +71,18 @@ class AndroidTvController extends RemoteController {
 
   @override
   Future<void> sendKey(RemoteKey key) async =>
+      throw const RemoteException('Android TV is not connected');
+
+  @override
+  Future<void> sendText(String text) async =>
+      throw const RemoteException('Android TV is not connected');
+
+  @override
+  Future<void> movePointer(double dx, double dy) async =>
+      throw const RemoteException('Android TV is not connected');
+
+  @override
+  Future<void> click() async =>
       throw const RemoteException('Android TV is not connected');
 
   @override

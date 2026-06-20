@@ -2,21 +2,22 @@ import 'package:flutter/foundation.dart';
 
 /// Declares what a given [RemoteController] can do, so the UI can adapt without
 /// ever naming a brand. e.g. the Touchpad screen shows a pointer surface when
-/// [pointer] is true and falls back to D-pad keys otherwise.
+/// [supportsPointer] is true and the Keyboard screen enables its field only
+/// when [supportsTextInput] is true.
 @immutable
 class Capabilities {
   const Capabilities({
-    this.pointer = false,
-    this.textInput = false,
+    this.supportsPointer = false,
+    this.supportsTextInput = false,
     this.channelButtons = true,
     this.numberPad = false,
   });
 
   /// Supports free pointer/touchpad movement (relative cursor moves + click).
-  final bool pointer;
+  final bool supportsPointer;
 
-  /// Supports sending arbitrary text (a soft keyboard) to the TV.
-  final bool textInput;
+  /// Supports sending arbitrary text (and backspace/enter) to the TV.
+  final bool supportsTextInput;
 
   /// Exposes dedicated channel up/down controls.
   final bool channelButtons;
@@ -27,11 +28,12 @@ class Capabilities {
   @override
   bool operator ==(Object other) =>
       other is Capabilities &&
-      other.pointer == pointer &&
-      other.textInput == textInput &&
+      other.supportsPointer == supportsPointer &&
+      other.supportsTextInput == supportsTextInput &&
       other.channelButtons == channelButtons &&
       other.numberPad == numberPad;
 
   @override
-  int get hashCode => Object.hash(pointer, textInput, channelButtons, numberPad);
+  int get hashCode =>
+      Object.hash(supportsPointer, supportsTextInput, channelButtons, numberPad);
 }

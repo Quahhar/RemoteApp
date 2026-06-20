@@ -5,7 +5,7 @@ import 'package:remote/state/app_providers.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
-  testWidgets('boots to the Remote tab with three destinations', (tester) async {
+  testWidgets('boots to the Remote tab with all destinations', (tester) async {
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
 
@@ -21,6 +21,7 @@ void main() {
     expect(find.text('Remote'), findsWidgets); // AppBar title + nav label
     expect(find.text('Devices'), findsOneWidget);
     expect(find.text('Touchpad'), findsOneWidget);
+    expect(find.text('Keyboard'), findsOneWidget);
 
     // With nothing saved, the Remote tab shows the empty-state hint.
     expect(find.textContaining('No TV selected'), findsOneWidget);

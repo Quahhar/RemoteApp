@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/active_device_provider.dart';
 import 'screens/devices_screen.dart';
+import 'screens/keyboard_screen.dart';
 import 'screens/remote_screen.dart';
 import 'screens/settings_screen.dart';
 import 'screens/touchpad_screen.dart';
@@ -22,7 +23,7 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   int _index = 0;
 
-  static const _titles = ['Remote', 'Devices', 'Touchpad'];
+  static const _titles = ['Remote', 'Devices', 'Touchpad', 'Keyboard'];
 
   @override
   void initState() {
@@ -64,6 +65,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           RemoteScreen(),
           DevicesScreen(),
           TouchpadScreen(),
+          KeyboardScreen(),
         ],
       ),
       bottomNavigationBar: NavigationBar(
@@ -84,6 +86,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             icon: Icon(Icons.touch_app_outlined),
             selectedIcon: Icon(Icons.touch_app),
             label: 'Touchpad',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.keyboard_outlined),
+            selectedIcon: Icon(Icons.keyboard),
+            label: 'Keyboard',
           ),
         ],
       ),
