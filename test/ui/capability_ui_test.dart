@@ -8,7 +8,6 @@ import 'package:remote/models/device.dart';
 import 'package:remote/models/protocol_type.dart';
 import 'package:remote/models/remote_key.dart';
 import 'package:remote/state/active_device_provider.dart';
-import 'package:remote/ui/screens/keyboard_screen.dart';
 import 'package:remote/ui/screens/touchpad_screen.dart';
 
 class FakeController extends RemoteController {
@@ -30,58 +29,57 @@ class FakeController extends RemoteController {
       emitStatus(ConnectionStatus.connected);
 
   @override
-  Future<void> disconnect() async =>
-      emitStatus(ConnectionStatus.disconnected);
+  Future<void> disconnect() async => emitStatus(ConnectionStatus.disconnected);
 
   @override
   Future<void> sendKey(RemoteKey key) async {}
 }
 
-Future<void> _pump(WidgetTester tester, Widget screen, Capabilities caps) {
+Future<void> _pump(WidgetTester tester, Capabilities caps) {
   return tester.pumpWidget(
     ProviderScope(
       overrides: [
         activeControllerProvider.overrideWithValue(FakeController(caps)),
       ],
-      child: MaterialApp(home: Scaffold(body: screen)),
+      child: const MaterialApp(home: Scaffold(body: TouchpadScreen())),
     ),
   );
 }
 
 void main() {
-  group('Keyboard screen gating', () {
-    testWidgets('disabled with a clear message when text is unsupported',
+  group('Touchpad send bar gating', () {
+    testWidgets('shows a clear message when text input is unsupported',
         (tester) async {
-      await _pump(tester, const KeyboardScreen(),
-          const Capabilities(supportsTextInput: false));
+      await _pump(tester, const Capabilities(supportsTextInput: false));
       await tester.pump();
-      expect(find.textContaining('Keyboard not supported'), findsOneWidget);
-      expect(find.byType(TextField), findsNothing);
+      expect(
+        find.text('Keyboard not supported on this device'),
+        findsOneWidget,
+      );
     });
 
-    testWidgets('shows a text field when text is supported', (tester) async {
-      await _pump(tester, const KeyboardScreen(),
-          const Capabilities(supportsTextInput: true));
+    testWidgets('is ready to type when text input is supported',
+        (tester) async {
+      await _pump(tester, const Capabilities(supportsTextInput: true));
       await tester.pump();
+      expect(find.text('Type to send to TV'), findsOneWidget);
       expect(find.byType(TextField), findsOneWidget);
     });
   });
 
-  group('Touchpad screen gating', () {
+  group('Touchpad surface gating', () {
     testWidgets('pointer surface when the controller supports a pointer',
         (tester) async {
-      await _pump(tester, const TouchpadScreen(),
-          const Capabilities(supportsPointer: true));
+      await _pump(tester, const Capabilities(supportsPointer: true));
       await tester.pump();
-      expect(find.textContaining('Drag to move'), findsOneWidget);
+      expect(find.text('TOUCHPAD AREA'), findsOneWidget);
     });
 
     testWidgets('swipe fallback when the controller has no pointer',
         (tester) async {
-      await _pump(tester, const TouchpadScreen(),
-          const Capabilities(supportsPointer: false));
+      await _pump(tester, const Capabilities(supportsPointer: false));
       await tester.pump();
-      expect(find.textContaining('Swipe to navigate'), findsOneWidget);
+      expect(find.text('SWIPE TO NAVIGATE'), findsOneWidget);
     });
   });
 }

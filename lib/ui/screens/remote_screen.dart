@@ -7,10 +7,10 @@ import '../../state/active_device_provider.dart';
 import '../../state/connection_provider.dart';
 import '../../theme/app_colors.dart';
 import '../remote_actions.dart';
-import 'settings_screen.dart';
 
 /// The home/Remote screen — a native reimplementation of the Remote Control
-/// mockup. Talks only to the active controller via [pressKey]; no brand logic.
+/// mockup. The shared header/gear is provided by the shell. Talks only to the
+/// active controller via [pressKey]; no brand logic.
 class RemoteScreen extends ConsumerWidget {
   const RemoteScreen({super.key});
 
@@ -20,79 +20,33 @@ class RemoteScreen extends ConsumerWidget {
     final status = ref.watch(connectionStatusProvider).value ??
         ConnectionStatus.disconnected;
 
-    return SafeArea(
-      bottom: false,
-      child: SingleChildScrollView(
-        child: Column(
-          children: [
-            _Header(
-              onSettings: () => Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const SettingsScreen()),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 22),
-              child: _DeviceCard(
-                name: device?.name ?? 'No TV selected',
-                status: status,
-                hasDevice: device != null,
-                onPower: () => pressKey(context, ref, RemoteKey.power),
-              ),
-            ),
-            const SizedBox(height: 18),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 80),
-              child: _Dpad(onKey: (k) => pressKey(context, ref, k)),
-            ),
-            const SizedBox(height: 34),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 22),
-              child: _VolChRow(onKey: (k) => pressKey(context, ref, k)),
-            ),
-            const SizedBox(height: 34),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 22),
-              child: _NavRow(onKey: (k) => pressKey(context, ref, k)),
-            ),
-            const SizedBox(height: 24),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Header extends StatelessWidget {
-  const _Header({required this.onSettings});
-  final VoidCallback onSettings;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(22, 12, 22, 8),
-      child: Stack(
-        alignment: Alignment.center,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(top: 8, bottom: 24),
+      child: Column(
         children: [
-          Align(
-            alignment: Alignment.centerLeft,
-            child: InkResponse(
-              onTap: onSettings,
-              radius: 24,
-              child: const Padding(
-                padding: EdgeInsets.all(4),
-                child: Icon(Icons.settings_outlined,
-                    size: 26, color: AppColors.textPrimary),
-              ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            child: _DeviceCard(
+              name: device?.name ?? 'No TV selected',
+              status: status,
+              hasDevice: device != null,
+              onPower: () => pressKey(context, ref, RemoteKey.power),
             ),
           ),
-          const Text(
-            'Remote Control',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
-              letterSpacing: 0.2,
-            ),
+          const SizedBox(height: 18),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 80),
+            child: _Dpad(onKey: (k) => pressKey(context, ref, k)),
+          ),
+          const SizedBox(height: 34),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            child: _VolChRow(onKey: (k) => pressKey(context, ref, k)),
+          ),
+          const SizedBox(height: 34),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 22),
+            child: _NavRow(onKey: (k) => pressKey(context, ref, k)),
           ),
         ],
       ),

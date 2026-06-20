@@ -6,13 +6,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../state/active_device_provider.dart';
 import '../theme/app_colors.dart';
 import 'screens/devices_screen.dart';
-import 'screens/keyboard_screen.dart';
 import 'screens/remote_screen.dart';
+import 'screens/settings_screen.dart';
 import 'screens/touchpad_screen.dart';
+import 'widgets/app_header.dart';
 
-/// Top-level shell. The background gradient is painted app-wide in `main`; here
-/// we host the tab bodies and a frosted bottom nav matching the mockup. The
-/// Settings gear lives in the Remote screen's own header (per the design).
+/// Top-level shell. Shared "Remote Control" header + a frosted bottom nav
+/// (Remote / Touchpad / Devices) over the app-wide gradient, matching the
+/// mockups. The keyboard lives inline on the Touchpad screen.
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
@@ -39,14 +40,27 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: IndexedStack(
-        index: _index,
-        children: const [
-          RemoteScreen(),
-          TouchpadScreen(),
-          DevicesScreen(),
-          KeyboardScreen(),
-        ],
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            AppHeader(
+              onSettings: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const SettingsScreen()),
+              ),
+            ),
+            Expanded(
+              child: IndexedStack(
+                index: _index,
+                children: const [
+                  RemoteScreen(),
+                  TouchpadScreen(),
+                  DevicesScreen(),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
       bottomNavigationBar: _FrostedNavBar(
         currentIndex: _index,
@@ -55,7 +69,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           _NavItem(Icons.settings_remote, 'Remote'),
           _NavItem(Icons.touch_app, 'Touchpad'),
           _NavItem(Icons.devices, 'Devices'),
-          _NavItem(Icons.keyboard, 'Keyboard'),
         ],
       ),
     );
@@ -94,7 +107,8 @@ class _FrostedNavBar extends StatelessWidget {
           ),
         ],
       ),
-      padding: EdgeInsets.only(top: 12, bottom: 12 + bottomInset, left: 10, right: 10),
+      padding:
+          EdgeInsets.only(top: 12, bottom: 12 + bottomInset, left: 10, right: 10),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [

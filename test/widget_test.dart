@@ -17,14 +17,13 @@ void main() {
     );
     await tester.pump();
 
-    // The Remote screen header from the mockup.
+    // The shared header from the mockups.
     expect(find.text('Remote Control'), findsOneWidget);
 
-    // Frosted bottom-nav destinations are present.
+    // Frosted bottom-nav destinations are present (Remote/Touchpad/Devices).
     expect(find.text('Remote'), findsOneWidget);
-    expect(find.text('Devices'), findsOneWidget);
     expect(find.text('Touchpad'), findsOneWidget);
-    expect(find.text('Keyboard'), findsOneWidget);
+    expect(find.text('Devices'), findsOneWidget);
 
     // With nothing saved, the device card shows the empty state.
     expect(find.textContaining('No TV selected'), findsOneWidget);

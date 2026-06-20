@@ -7,7 +7,6 @@ import '../../models/protocol_type.dart';
 import '../../state/active_device_provider.dart';
 import '../../state/discovery_provider.dart';
 import '../../state/saved_devices_provider.dart';
-import '../widgets/screen_header.dart';
 
 /// Device manager: saved devices, a live cross-protocol scan, and manual add by
 /// IP + brand. Selecting a device makes it active and connects.
@@ -30,7 +29,6 @@ class DevicesScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
-            const ScreenHeader('Devices'),
             _ScanBar(
               scanning: discovery.scanning,
               onScan: () => ref.read(discoveryProvider.notifier).scan(),
