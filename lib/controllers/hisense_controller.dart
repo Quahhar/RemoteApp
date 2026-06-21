@@ -12,7 +12,6 @@ import '../models/device.dart';
 import '../models/protocol_type.dart';
 import '../models/remote_key.dart';
 import '../persistence/vidaa_identity_store.dart';
-import 'lan_scan.dart';
 import 'remote_controller.dart';
 
 /// Hisense / VIDAA TVs (and rebrands such as "Kenstar") via their MQTT-over-TLS
@@ -88,19 +87,11 @@ class HisenseController extends RemoteController {
   @override
   String? get authToken => _credential;
 
-  // --- Discovery: any host with 36669 open is a VIDAA TV. --------------------
-
+  /// Discovery is handled centrally by the cross-protocol LAN port scan
+  /// (`discoverTvsByPortScan`), which probes 36669 for us — see [kTvDiscoveryPorts].
   @override
   Stream<Device> discover({Duration timeout = const Duration(seconds: 5)}) =>
-      scanSubnetForOpenPort(ProtocolType.vidaa.defaultPort, timeout: timeout)
-          .map(
-        (host) => Device(
-          id: 'vidaa-$host',
-          name: 'Hisense / VIDAA TV ($host)',
-          host: host,
-          protocol: ProtocolType.vidaa,
-        ),
-      );
+      const Stream<Device>.empty();
 
   // --- Topic helpers (pure; exposed for unit tests) --------------------------
 

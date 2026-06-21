@@ -20,10 +20,17 @@ class DevicesScreen extends ConsumerWidget {
     final discovery = ref.watch(discoveryProvider);
     final active = ref.watch(activeDeviceProvider);
 
-    // Discovered devices not already in the saved list.
+    // Discovered devices not already in the saved list. Match on id *or*
+    // (protocol, host) so a TV saved via SSDP (rich id) isn't shown again when
+    // the LAN port scan re-finds it with a host-based id.
     final savedIds = saved.map((d) => d.id).toSet();
-    final newlyFound =
-        discovery.devices.where((d) => !savedIds.contains(d.id)).toList();
+    final savedKeys =
+        saved.map((d) => '${d.protocol.name}@${d.host}').toSet();
+    final newlyFound = discovery.devices
+        .where((d) =>
+            !savedIds.contains(d.id) &&
+            !savedKeys.contains('${d.protocol.name}@${d.host}'))
+        .toList();
 
     return Scaffold(
       body: SafeArea(

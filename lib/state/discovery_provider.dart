@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../controllers/lan_scan.dart';
 import '../models/device.dart';
 import 'app_providers.dart';
 
@@ -36,37 +37,39 @@ class DiscoveryNotifier extends Notifier<DiscoveryState> {
     return const DiscoveryState();
   }
 
-  /// Start a fresh scan across all protocols. Devices appear incrementally;
-  /// [DiscoveryState.scanning] flips false once every protocol's scan window
-  /// closes.
+  /// Start a fresh scan. Runs every protocol's own discovery (SSDP/multicast,
+  /// which carries friendlier names) *and* a single cross-protocol LAN port scan
+  /// that finds any supported TV by its known ports — more reliable on networks
+  /// that block multicast. Devices appear incrementally and are de-duplicated by
+  /// (protocol, host) so a TV found by both paths shows up once.
+  /// [DiscoveryState.scanning] flips false once every source closes.
   Future<void> scan({Duration timeout = const Duration(seconds: 6)}) async {
     _cancelAll();
     final seen = <String>{};
     state = const DiscoveryState(scanning: true, devices: []);
 
     final registry = ref.read(controllerRegistryProvider);
-    final protocols = registry.protocols;
-    if (protocols.isEmpty) {
-      state = state.copyWith(scanning: false);
-      return;
-    }
+    final sources = <Stream<Device>>[
+      for (final protocol in registry.protocols)
+        registry.controllerFor(protocol).discover(timeout: timeout),
+      discoverTvsByPortScan(),
+    ];
 
-    var remaining = protocols.length;
-    void onProtocolDone() {
+    var remaining = sources.length;
+    void onSourceDone() {
       remaining--;
       if (remaining == 0) state = state.copyWith(scanning: false);
     }
 
-    for (final protocol in protocols) {
-      final controller = registry.controllerFor(protocol);
-      final sub = controller.discover(timeout: timeout).listen(
+    for (final source in sources) {
+      final sub = source.listen(
         (device) {
-          if (seen.add(device.id)) {
+          if (seen.add('${device.protocol.name}@${device.host}')) {
             state = state.copyWith(devices: [...state.devices, device]);
           }
         },
-        onError: (_) {}, // a single protocol failing shouldn't abort the scan
-        onDone: onProtocolDone,
+        onError: (_) {}, // a single source failing shouldn't abort the scan
+        onDone: onSourceDone,
         cancelOnError: false,
       );
       _subs.add(sub);
