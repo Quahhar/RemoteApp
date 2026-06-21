@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../controllers/controller_registry.dart';
 import '../controllers/default_registry.dart';
+import '../persistence/atv_identity_store.dart';
 import '../persistence/device_store.dart';
 
 /// Provides the loaded [SharedPreferences]. Overridden in `main()` with the
@@ -21,7 +22,10 @@ final deviceStoreProvider = Provider<DeviceStore>(
 
 /// The protocol -> controller registry. Disposed with the provider container.
 final controllerRegistryProvider = Provider<ControllerRegistry>((ref) {
-  final registry = buildControllerRegistry();
+  final prefs = ref.watch(sharedPreferencesProvider);
+  final registry = buildControllerRegistry(
+    atvIdentity: AtvIdentityStore(prefs),
+  );
   ref.onDispose(registry.disposeAll);
   return registry;
 });

@@ -59,6 +59,18 @@ abstract class RemoteController {
   /// Tear down the active connection. Safe to call when already disconnected.
   Future<void> disconnect();
 
+  /// Begin a code-based pairing (only when [Capabilities.requiresPairingCode]).
+  /// Connects/handshakes until the TV shows its code, then returns; the UI then
+  /// collects the code and calls [completePairing]. Default: unsupported.
+  Future<void> beginPairing(Device device) =>
+      throw UnsupportedError('${protocol.label} does not use code pairing');
+
+  /// Finish a [beginPairing] session with the on-screen [code]. On success the
+  /// resulting credential is available via [authToken]. Throws
+  /// [PairingRejectedException] on a wrong code. Default: unsupported.
+  Future<void> completePairing(String code) =>
+      throw UnsupportedError('${protocol.label} does not use code pairing');
+
   /// Send a single button press to the connected device.
   Future<void> sendKey(RemoteKey key);
 

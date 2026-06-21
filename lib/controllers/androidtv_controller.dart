@@ -1,45 +1,76 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import '../models/capabilities.dart';
 import '../models/connection_status.dart';
 import '../models/device.dart';
 import '../models/protocol_type.dart';
 import '../models/remote_key.dart';
+import '../persistence/atv_identity_store.dart';
+import 'androidtv/atv_crypto.dart';
+import 'androidtv/atv_messages.dart';
+import 'androidtv/atv_proto.dart';
 import 'remote_controller.dart';
 
-/// Android TV / Google TV via the "Remote v2" protocol.
+/// Android TV / Google TV via the Remote v2 protocol.
 ///
-/// The full transport is a two-phase TLS exchange: a pairing channel
-/// (port 6467) where the user confirms a 6-digit code shown on the TV — which
-/// yields a client certificate we persist — followed by a remote channel
-/// (port 6466) carrying length-prefixed protobuf key events. That handshake
-/// (X.509 client-cert generation + protobuf framing + the code-derived secret)
-/// is the one piece that must be validated against real hardware, so it is not
-/// wired into this build yet.
+/// Two TLS channels share one app-global client certificate:
+///  - pairing (6467): the 6-digit on-screen code handshake — [beginPairing]
+///    connects and waits until the TV shows the code, then [completePairing]
+///    sends the derived secret and persists the pairing.
+///  - remote (6466): [connect] does the configure/set-active handshake and
+///    answers pings; [sendKey] injects Android key events.
 ///
-/// Everything else conforms to the shared interface: the registry resolves it,
-/// the key map is complete (the exact Android keycodes the protocol transmits),
-/// and [connect] fails with a clear, actionable message instead of pretending.
+/// A device is "paired" once its [Device.authToken] is the `paired` marker; the
+/// actual certificate lives app-globally in [AtvIdentityStore].
 class AndroidTvController extends RemoteController {
-  /// RemoteKey -> Android `KeyEvent` keycode (the integer the v2 remote channel
-  /// sends). Verified against the standard Android keycode constants.
+  AndroidTvController({
+    required this.identity,
+    this.connectTimeout = const Duration(seconds: 8),
+    this.pairingTimeout = const Duration(seconds: 60),
+  });
+
+  final AtvIdentityStore identity;
+  final Duration connectTimeout;
+  final Duration pairingTimeout;
+
+  static const int _pairingPort = 6467;
+  static const int _remotePort = 6466;
+  static const String pairedMarker = 'paired';
+
+  SecureSocket? _remote;
+  FrameReader _remoteFrames = FrameReader();
+  Completer<void>? _active;
+
+  SecureSocket? _pairing;
+  FrameReader _pairingFrames = FrameReader();
+  Completer<void>? _codeReady;
+  Completer<void>? _secretAck;
+  Uint8List? _clientCertDer;
+  Uint8List? _serverCertDer;
+
+  String? _credential;
+
+  /// RemoteKey -> Android `KeyEvent` keycode (the value the v2 channel sends).
   static const Map<RemoteKey, int> keyCodes = {
-    RemoteKey.power: 26, // KEYCODE_POWER
-    RemoteKey.up: 19, // KEYCODE_DPAD_UP
-    RemoteKey.down: 20, // KEYCODE_DPAD_DOWN
-    RemoteKey.left: 21, // KEYCODE_DPAD_LEFT
-    RemoteKey.right: 22, // KEYCODE_DPAD_RIGHT
-    RemoteKey.ok: 23, // KEYCODE_DPAD_CENTER
-    RemoteKey.back: 4, // KEYCODE_BACK
-    RemoteKey.home: 3, // KEYCODE_HOME
-    RemoteKey.menu: 82, // KEYCODE_MENU
-    RemoteKey.volumeUp: 24, // KEYCODE_VOLUME_UP
-    RemoteKey.volumeDown: 25, // KEYCODE_VOLUME_DOWN
-    RemoteKey.mute: 164, // KEYCODE_VOLUME_MUTE
-    RemoteKey.channelUp: 166, // KEYCODE_CHANNEL_UP
-    RemoteKey.channelDown: 167, // KEYCODE_CHANNEL_DOWN
-    RemoteKey.play: 126, // KEYCODE_MEDIA_PLAY
-    RemoteKey.pause: 127, // KEYCODE_MEDIA_PAUSE
+    RemoteKey.power: 26,
+    RemoteKey.up: 19,
+    RemoteKey.down: 20,
+    RemoteKey.left: 21,
+    RemoteKey.right: 22,
+    RemoteKey.ok: 23,
+    RemoteKey.back: 4,
+    RemoteKey.home: 3,
+    RemoteKey.menu: 82,
+    RemoteKey.volumeUp: 24,
+    RemoteKey.volumeDown: 25,
+    RemoteKey.mute: 164,
+    RemoteKey.channelUp: 166,
+    RemoteKey.channelDown: 167,
+    RemoteKey.play: 126,
+    RemoteKey.pause: 127,
   };
 
   @override
@@ -47,44 +78,245 @@ class AndroidTvController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        supportsPointer: true, // protocol supports pointer (once paired)
-        supportsTextInput: true, // protocol supports text (once paired)
+        supportsPointer: false, // v2 is key-based; no pointer
+        supportsTextInput: false, // IME text is a later addition
         channelButtons: true,
         numberPad: true,
+        requiresPairingCode: true,
       );
 
-  /// Discovery is mDNS (`_androidtvremote2._tcp`); until that and the pairing
-  /// handshake land, devices are added manually by IP. Emits nothing for now.
+  @override
+  String? get authToken => _credential;
+
+  /// mDNS discovery is a later addition; add devices manually for now.
   @override
   Stream<Device> discover({Duration timeout = const Duration(seconds: 5)}) =>
       const Stream<Device>.empty();
 
+  SecurityContext _securityContext(AtvIdentity id) {
+    return SecurityContext(withTrustedRoots: false)
+      ..useCertificateChainBytes(utf8.encode(id.certPem))
+      ..usePrivateKeyBytes(utf8.encode(id.keyPem));
+  }
+
+  void _send(SecureSocket socket, Uint8List message) =>
+      socket.add(frame(message));
+
+  // --- Pairing ---------------------------------------------------------------
+
   @override
-  Future<void> connect(Device device) async {
+  Future<void> beginPairing(Device device) async {
     emitStatus(ConnectionStatus.connecting);
-    emitStatus(ConnectionStatus.error);
-    throw const PairingRequiredException(
-      'Android TV pairing needs the 6-digit code shown on the TV. '
-      'This handshake is not enabled in this build yet.',
+    final id = await identity.ensure();
+    _clientCertDer = AtvCrypto.pemToDer(id.certPem);
+    try {
+      _pairing = await SecureSocket.connect(
+        device.host,
+        device.port ?? _pairingPort,
+        context: _securityContext(id),
+        onBadCertificate: (_) => true,
+      ).timeout(connectTimeout);
+    } catch (_) {
+      emitStatus(ConnectionStatus.error);
+      throw const NotReachableException();
+    }
+    _serverCertDer = _pairing!.peerCertificate?.der;
+    if (_serverCertDer == null) {
+      await _closePairing();
+      emitStatus(ConnectionStatus.error);
+      throw const NotReachableException('No certificate from TV');
+    }
+    _pairingFrames = FrameReader();
+    _codeReady = Completer<void>();
+    _pairing!.listen(
+      _onPairingData,
+      onError: (Object e) => _failPairing(e),
+      onDone: () => _failPairing('connection closed'),
+      cancelOnError: true,
+    );
+    _send(_pairing!, AtvMessages.pairingRequest('Flutter Remote'));
+
+    await _codeReady!.future.timeout(
+      pairingTimeout,
+      onTimeout: () {
+        _closePairing();
+        throw const PairingRequiredException('Timed out reaching the TV');
+      },
     );
   }
 
-  @override
-  Future<void> sendKey(RemoteKey key) async =>
-      throw const RemoteException('Android TV is not connected');
+  void _onPairingData(Uint8List chunk) {
+    for (final msg in _pairingFrames.add(chunk)) {
+      final m = AtvMessages.parsePairing(msg);
+      if (!m.ok) {
+        _failPairing('TV returned status ${m.status}');
+        return;
+      }
+      switch (m.type) {
+        case PairingType.requestAck:
+          _send(_pairing!, AtvMessages.pairingOption());
+        case PairingType.option:
+          _send(_pairing!, AtvMessages.pairingConfiguration());
+        case PairingType.configurationAck:
+          _completeOnce(_codeReady);
+        case PairingType.secretAck:
+          _completeOnce(_secretAck);
+        case PairingType.unknown:
+          break;
+      }
+    }
+  }
 
   @override
-  Future<void> sendText(String text) async =>
-      throw const RemoteException('Android TV is not connected');
+  Future<void> completePairing(String code) async {
+    if (_pairing == null || _serverCertDer == null || _clientCertDer == null) {
+      throw const PairingRequiredException('Start pairing first');
+    }
+    final Uint8List secret;
+    try {
+      secret = AtvCrypto.computeSecret(
+        clientCertDer: _clientCertDer!,
+        serverCertDer: _serverCertDer!,
+        code: code.trim(),
+      );
+    } on FormatException {
+      throw const PairingRejectedException('That code didn\'t match — try again');
+    }
+    _secretAck = Completer<void>();
+    _send(_pairing!, AtvMessages.pairingSecret(secret));
+    try {
+      await _secretAck!.future.timeout(connectTimeout);
+    } catch (_) {
+      await _closePairing();
+      emitStatus(ConnectionStatus.error);
+      throw const PairingRejectedException();
+    }
+    _credential = pairedMarker;
+    await _closePairing();
+    emitStatus(ConnectionStatus.disconnected);
+  }
+
+  void _failPairing(Object error) {
+    _codeReady?.completeError(const PairingRejectedException());
+    _secretAck?.completeError(const PairingRejectedException());
+    _codeReady = null;
+    _secretAck = null;
+  }
+
+  Future<void> _closePairing() async {
+    try {
+      await _pairing?.close();
+    } catch (_) {}
+    _pairing = null;
+  }
+
+  // --- Remote (control) ------------------------------------------------------
 
   @override
-  Future<void> movePointer(double dx, double dy) async =>
-      throw const RemoteException('Android TV is not connected');
+  Future<void> connect(Device device) async {
+    if (device.authToken != pairedMarker) {
+      emitStatus(ConnectionStatus.error);
+      throw const PairingRequiredException();
+    }
+    final id = identity.load();
+    if (id == null) {
+      emitStatus(ConnectionStatus.error);
+      throw const PairingRequiredException('Pairing was lost — pair again');
+    }
+    emitStatus(ConnectionStatus.connecting);
+    try {
+      _remote = await SecureSocket.connect(
+        device.host,
+        _remotePort,
+        context: _securityContext(id),
+        onBadCertificate: (_) => true,
+      ).timeout(connectTimeout);
+    } catch (_) {
+      emitStatus(ConnectionStatus.error);
+      throw const NotReachableException();
+    }
+    _remoteFrames = FrameReader();
+    _active = Completer<void>();
+    _remote!.listen(
+      _onRemoteData,
+      onError: (Object _) => _failRemote(),
+      onDone: _failRemote,
+      cancelOnError: true,
+    );
+    try {
+      await _active!.future.timeout(connectTimeout);
+    } catch (_) {
+      await _closeRemote();
+      emitStatus(ConnectionStatus.error);
+      throw const NotReachableException('TV did not complete the handshake');
+    }
+    _credential = pairedMarker;
+    emitStatus(ConnectionStatus.connected);
+  }
+
+  void _onRemoteData(Uint8List chunk) {
+    for (final msg in _remoteFrames.add(chunk)) {
+      final m = AtvMessages.parseRemote(msg);
+      switch (m.type) {
+        case RemoteType.configure:
+          _send(_remote!, AtvMessages.remoteConfigure());
+        case RemoteType.setActive:
+          _send(_remote!, AtvMessages.remoteSetActive());
+          _completeOnce(_active); // ready once active
+        case RemoteType.start:
+          _completeOnce(_active);
+        case RemoteType.pingRequest:
+          _send(_remote!, AtvMessages.remotePingResponse(m.pingVal1));
+        case RemoteType.other:
+          break;
+      }
+    }
+  }
 
   @override
-  Future<void> click() async =>
+  Future<void> sendKey(RemoteKey key) async {
+    final socket = _remote;
+    if (socket == null) {
       throw const RemoteException('Android TV is not connected');
+    }
+    final code = keyCodes[key];
+    if (code == null) {
+      throw RemoteException('Unsupported key: ${key.name}');
+    }
+    _send(socket, AtvMessages.remoteKeyInject(code));
+  }
+
+  void _failRemote() {
+    if (_active != null && !_active!.isCompleted) {
+      _active!.completeError(const ConnectionLostException());
+    }
+    if (status == ConnectionStatus.connected) {
+      emitStatus(ConnectionStatus.error);
+    }
+  }
+
+  Future<void> _closeRemote() async {
+    try {
+      await _remote?.close();
+    } catch (_) {}
+    _remote = null;
+  }
 
   @override
-  Future<void> disconnect() async => emitStatus(ConnectionStatus.disconnected);
+  Future<void> disconnect() async {
+    await _closeRemote();
+    await _closePairing();
+    emitStatus(ConnectionStatus.disconnected);
+  }
+
+  @override
+  void dispose() {
+    _remote?.destroy();
+    _pairing?.destroy();
+    super.dispose();
+  }
+
+  void _completeOnce(Completer<void>? c) {
+    if (c != null && !c.isCompleted) c.complete();
+  }
 }

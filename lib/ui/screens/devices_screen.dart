@@ -5,6 +5,7 @@ import '../../controllers/remote_controller.dart';
 import '../../models/device.dart';
 import '../../models/protocol_type.dart';
 import '../../state/active_device_provider.dart';
+import '../../state/app_providers.dart';
 import '../../state/discovery_provider.dart';
 import '../../state/saved_devices_provider.dart';
 
@@ -81,6 +82,14 @@ class DevicesScreen extends ConsumerWidget {
 
   Future<void> _select(
       BuildContext context, WidgetRef ref, Device device) async {
+    final controller =
+        ref.read(controllerRegistryProvider).controllerFor(device.protocol);
+    // Code-based pairing (Android TV) must happen before we connect.
+    if (controller.capabilities.requiresPairingCode && !device.isPaired) {
+      await _pairThenConnect(context, ref, controller, device);
+      return;
+    }
+
     final messenger = ScaffoldMessenger.of(context);
     messenger.showSnackBar(
       SnackBar(content: Text('Connecting to ${device.name}…')),
@@ -100,6 +109,61 @@ class DevicesScreen extends ConsumerWidget {
         const SnackBar(content: Text('Could not connect to the device')),
       );
     }
+  }
+
+  /// Run the on-TV code pairing, then connect. Generic over any controller that
+  /// declares [Capabilities.requiresPairingCode] — no brand logic here.
+  Future<void> _pairThenConnect(
+    BuildContext context,
+    WidgetRef ref,
+    RemoteController controller,
+    Device device,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      SnackBar(content: Text('Pairing with ${device.name}…')),
+    );
+    try {
+      await controller.beginPairing(device);
+    } on RemoteException catch (e) {
+      messenger
+        ..removeCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(e.message)));
+      return;
+    } catch (_) {
+      messenger
+        ..removeCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('Could not reach the TV')));
+      return;
+    }
+    messenger.removeCurrentSnackBar();
+    if (!context.mounted) return;
+
+    final code = await showDialog<String>(
+      context: context,
+      builder: (_) => _PairingCodeDialog(deviceName: device.name),
+    );
+    if (code == null || code.isEmpty) {
+      await controller.disconnect();
+      return;
+    }
+
+    try {
+      await controller.completePairing(code);
+    } on RemoteException catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      return;
+    }
+
+    final token = controller.authToken;
+    if (token == null) {
+      messenger.showSnackBar(
+        const SnackBar(content: Text('Pairing failed — please try again')),
+      );
+      return;
+    }
+    if (!context.mounted) return;
+    await _select(context, ref, device.copyWith(authToken: token));
   }
 
   Future<void> _showManualAdd(BuildContext context, WidgetRef ref) async {
@@ -310,6 +374,62 @@ class _ManualAddDialogState extends State<_ManualAddDialog> {
           child: const Text('Cancel'),
         ),
         FilledButton(onPressed: _submit, child: const Text('Add')),
+      ],
+    );
+  }
+}
+
+/// Collects the 6-character code the TV shows during pairing.
+class _PairingCodeDialog extends StatefulWidget {
+  const _PairingCodeDialog({required this.deviceName});
+  final String deviceName;
+
+  @override
+  State<_PairingCodeDialog> createState() => _PairingCodeDialogState();
+}
+
+class _PairingCodeDialogState extends State<_PairingCodeDialog> {
+  final _controller = TextEditingController();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() => Navigator.of(context).pop(_controller.text.trim());
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Enter pairing code'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            'Enter the code shown on ${widget.deviceName}.',
+            style: Theme.of(context).textTheme.bodyMedium,
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _controller,
+            autofocus: true,
+            textCapitalization: TextCapitalization.characters,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => _submit(),
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+              hintText: 'e.g. 4A7B2C',
+            ),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Pair')),
       ],
     );
   }

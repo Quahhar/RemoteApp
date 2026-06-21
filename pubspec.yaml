@@ -47,6 +47,11 @@ dependencies:
   network_info_plus: ^8.1.0
   # Poppins typeface used by the design mockups.
   google_fonts: ^8.1.0
+  # Android TV Remote v2: RSA keygen + self-signed X.509 (basic_utils),
+  # crypto primitives (pointycastle), and cert parsing (asn1lib).
+  basic_utils: ^5.8.2
+  pointycastle: ^4.0.0
+  asn1lib: ^1.6.5
 
 dev_dependencies:
   flutter_test:

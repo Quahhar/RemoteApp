@@ -11,6 +11,7 @@ class Capabilities {
     this.supportsTextInput = false,
     this.channelButtons = true,
     this.numberPad = false,
+    this.requiresPairingCode = false,
   });
 
   /// Supports free pointer/touchpad movement (relative cursor moves + click).
@@ -25,15 +26,22 @@ class Capabilities {
   /// Supports a 0-9 number pad for direct channel entry.
   final bool numberPad;
 
+  /// Pairing requires entering a code shown on the TV (e.g. Android TV). The
+  /// Devices flow runs [RemoteController.beginPairing]/[RemoteController.completePairing]
+  /// before connecting. (LG/Samsung pair by accepting a prompt on the TV, so
+  /// they leave this false.)
+  final bool requiresPairingCode;
+
   @override
   bool operator ==(Object other) =>
       other is Capabilities &&
       other.supportsPointer == supportsPointer &&
       other.supportsTextInput == supportsTextInput &&
       other.channelButtons == channelButtons &&
-      other.numberPad == numberPad;
+      other.numberPad == numberPad &&
+      other.requiresPairingCode == requiresPairingCode;
 
   @override
-  int get hashCode =>
-      Object.hash(supportsPointer, supportsTextInput, channelButtons, numberPad);
+  int get hashCode => Object.hash(supportsPointer, supportsTextInput,
+      channelButtons, numberPad, requiresPairingCode);
 }
