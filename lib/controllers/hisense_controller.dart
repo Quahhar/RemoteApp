@@ -196,18 +196,24 @@ class HisenseController extends RemoteController {
     }
 
     if (connected == null) {
+      // In debug, append the real cause + whether the client cert actually
+      // loaded, so a live test surfaces the exact problem on-screen.
+      final detail = kDebugMode
+          ? ' [clientCert=${tls != null}; '
+              'err=${lastError ?? (timedOut ? 'timeout' : lastStatus?.returnCode)}]'
+          : '';
       // Prefer the broker's own rejection reason (CONNACK code) when it gave
       // one; otherwise classify the socket/TLS error or report the timeout.
       if (_hasMeaningfulCode(lastStatus)) {
-        throw NotReachableException(_describeStatus(lastStatus));
+        throw NotReachableException('${_describeStatus(lastStatus)}$detail');
       }
       if (timedOut) {
-        throw const NotReachableException(
+        throw NotReachableException(
           'The TV did not answer on port 36669 — make sure it is on and on the '
-          'same Wi-Fi network.',
+          'same Wi-Fi network.$detail',
         );
       }
-      throw NotReachableException(_describeConnectError(lastError));
+      throw NotReachableException('${_describeConnectError(lastError)}$detail');
     }
 
     _client = connected;
