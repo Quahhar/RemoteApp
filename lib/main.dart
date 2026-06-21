@@ -1,14 +1,28 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'state/app_providers.dart';
-import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 import 'ui/home_shell.dart';
+import 'ui/widgets/lava_lamp_background.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Draw behind the system bars and make them transparent so the app's
+  // background + frosted nav bar blend with the phone's status/navigation bars.
+  await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  SystemChrome.setSystemUIOverlayStyle(
+    const SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: Brightness.dark,
+      statusBarBrightness: Brightness.light,
+      systemNavigationBarColor: Colors.transparent,
+      systemNavigationBarIconBrightness: Brightness.dark,
+      systemNavigationBarContrastEnforced: false,
+    ),
+  );
   final prefs = await SharedPreferences.getInstance();
   runApp(
     ProviderScope(
@@ -27,12 +41,9 @@ class RemoteApp extends StatelessWidget {
       title: 'Remote',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      // Paint the gradient behind every route so transparent scaffolds, dialogs,
-      // and the Settings page all share the mockup background.
-      builder: (context, child) => DecoratedBox(
-        decoration: const BoxDecoration(gradient: AppColors.backgroundGradient),
-        child: child,
-      ),
+      // The animated (or static) background sits behind every route.
+      builder: (context, child) =>
+          AppBackground(child: child ?? const SizedBox.shrink()),
       home: const HomeShell(),
     );
   }

@@ -99,17 +99,17 @@ class _FrostedNavBar extends StatelessWidget {
     return Container(
       decoration: const BoxDecoration(
         color: AppColors.navBar,
-        border: Border(top: BorderSide(color: Color(0x99FFFFFF))),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
         boxShadow: [
           BoxShadow(
-            color: Color(0x1A463778),
-            blurRadius: 24,
-            offset: Offset(0, -6),
+            color: Color(0x1F463778),
+            blurRadius: 28,
+            offset: Offset(0, -8),
           ),
         ],
       ),
       padding:
-          EdgeInsets.only(top: 12, bottom: 12 + bottomInset, left: 10, right: 10),
+          EdgeInsets.only(top: 14, bottom: 12 + bottomInset, left: 10, right: 10),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../models/connection_status.dart';
 import '../../state/active_device_provider.dart';
 import '../../state/connection_provider.dart';
+import '../../state/preferences_provider.dart';
 import '../../state/saved_devices_provider.dart';
 import 'devices_screen.dart' show protocolIcon;
 
@@ -50,6 +51,24 @@ class SettingsScreen extends ConsumerWidget {
                 ),
               ),
             ],
+            const Divider(height: 32),
+            const _Header('Preferences'),
+            SwitchListTile(
+              secondary: const Icon(Icons.vibration),
+              title: const Text('Haptic feedback'),
+              subtitle: const Text('Vibrate on button presses'),
+              value: ref.watch(hapticsEnabledProvider),
+              onChanged: (v) =>
+                  ref.read(hapticsEnabledProvider.notifier).set(v),
+            ),
+            SwitchListTile(
+              secondary: const Icon(Icons.gradient),
+              title: const Text('Animated background'),
+              subtitle: const Text('Slow lava-lamp motion (off = static)'),
+              value: ref.watch(animatedBackgroundProvider),
+              onChanged: (v) =>
+                  ref.read(animatedBackgroundProvider.notifier).set(v),
+            ),
             const Divider(height: 32),
             const _Header('Devices'),
             ListTile(

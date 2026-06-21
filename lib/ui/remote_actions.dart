@@ -7,6 +7,12 @@ import '../models/remote_key.dart';
 import '../state/active_device_provider.dart';
 import '../state/discovery_provider.dart';
 import '../state/navigation_provider.dart';
+import '../state/preferences_provider.dart';
+
+/// Fire a light haptic tap if the user hasn't disabled haptics in Settings.
+void hapticTap(WidgetRef ref) {
+  if (ref.read(hapticsEnabledProvider)) HapticFeedback.lightImpact();
+}
 
 /// Sends [key] to the *active controller only* — the single brand-agnostic path
 /// the UI uses. Adds haptic feedback and surfaces failures as a SnackBar with
@@ -18,7 +24,7 @@ Future<void> pressKey(BuildContext context, WidgetRef ref, RemoteKey key) async 
     promptNoDevice(context, ref);
     return;
   }
-  HapticFeedback.lightImpact();
+  hapticTap(ref);
   final messenger = ScaffoldMessenger.of(context);
   try {
     await controller.sendKey(key);

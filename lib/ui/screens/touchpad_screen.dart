@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../controllers/remote_controller.dart';
 import '../../models/remote_key.dart';
 import '../../state/active_device_provider.dart';
+import '../../state/preferences_provider.dart';
 import '../../theme/app_colors.dart';
 import '../remote_actions.dart';
 
@@ -79,7 +80,7 @@ class TouchpadScreen extends ConsumerWidget {
       return;
     }
     final messenger = ScaffoldMessenger.of(context);
-    HapticFeedback.selectionClick();
+    if (ref.read(hapticsEnabledProvider)) HapticFeedback.selectionClick();
     try {
       await controller.click();
     } on RemoteException catch (e) {
@@ -243,7 +244,7 @@ class _SendBarState extends ConsumerState<_SendBar> {
     }
     final messenger = ScaffoldMessenger.of(context);
     _controller.clear();
-    HapticFeedback.selectionClick();
+    if (ref.read(hapticsEnabledProvider)) HapticFeedback.selectionClick();
     _queue = _queue.then((_) async {
       try {
         await controller.sendText(text);
