@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show HandshakeException, SocketException;
+import 'dart:io' show HandshakeException, SecurityContext, SocketException;
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show rootBundle;
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 
@@ -44,6 +45,15 @@ class HisenseController extends RemoteController {
   static const String username = 'hisenseservice';
   static const String password = 'multimqttservice';
   static const String pairedMarker = 'paired';
+
+  /// RemoteCA-signed client certificate + key (bundled assets). Modern VIDAA
+  /// TVs demand mutual TLS — the broker drops the MQTT session unless we present
+  /// this client identity, even though the TLS handshake itself tolerates none.
+  static const String _certAsset = 'assets/certs/vidaa_client_cert.pem';
+  static const String _keyAsset = 'assets/certs/vidaa_client_key.pem';
+
+  /// Loaded once and reused; the cert/key are constant for all VIDAA TVs.
+  static Future<SecurityContext?>? _tlsContextFuture;
 
   MqttServerClient? _client;
   StreamSubscription<List<MqttReceivedMessage<MqttMessage>>>? _updates;
@@ -145,6 +155,7 @@ class HisenseController extends RemoteController {
     _deviceTopic = deviceTopicFor(mac);
     final host = device.host;
     final port = device.port ?? ProtocolType.vidaa.defaultPort;
+    final tls = await _clientTlsContext();
 
     // Firmware varies: most speak MQTT 3.1.1, some only the older 3.1. Try the
     // common one first, then fall back before giving up.
@@ -154,7 +165,7 @@ class HisenseController extends RemoteController {
     var timedOut = false;
 
     for (final useV311 in const [true, false]) {
-      final client = _buildClient(host, port, useV311: useV311);
+      final client = _buildClient(host, port, useV311: useV311, tls: tls);
       try {
         await client.connect().timeout(connectTimeout);
       } on TimeoutException {
@@ -208,6 +219,7 @@ class HisenseController extends RemoteController {
     String host,
     int port, {
     required bool useV311,
+    SecurityContext? tls,
   }) {
     // No '/' or other special chars — some Hisense brokers reject such IDs.
     final clientId = 'remoteapp-${_randomHex(8)}';
@@ -220,12 +232,32 @@ class HisenseController extends RemoteController {
           .withClientIdentifier(clientId)
           .authenticateAs(username, password)
           .startClean());
+    // Present our client cert for the TV's mutual-TLS broker (when available).
+    if (tls != null) client.securityContext = tls;
     if (useV311) {
       client.setProtocolV311();
     } else {
       client.setProtocolV31();
     }
     return client;
+  }
+
+  /// Loads the bundled RemoteCA client cert/key into a [SecurityContext] for
+  /// mutual TLS, once. Returns null (and we connect without a client cert) if
+  /// the assets can't be read, so non-mutual-TLS firmware still works.
+  Future<SecurityContext?> _clientTlsContext() {
+    return _tlsContextFuture ??= () async {
+      try {
+        final cert = await rootBundle.load(_certAsset);
+        final key = await rootBundle.load(_keyAsset);
+        return SecurityContext(withTrustedRoots: false)
+          ..useCertificateChainBytes(cert.buffer.asUint8List())
+          ..usePrivateKeyBytes(key.buffer.asUint8List());
+      } catch (e) {
+        if (kDebugMode) debugPrint('[Hisense] client cert load failed: $e');
+        return null;
+      }
+    }();
   }
 
   /// True when the broker actually returned a CONNACK rejection code (so we can
