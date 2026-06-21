@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show HandshakeException, SocketException;
 import 'dart:math';
 
 import 'package:flutter/foundation.dart';
@@ -118,12 +119,21 @@ class HisenseController extends RemoteController {
   static String authCodePayload(String code) =>
       jsonEncode({'authNum': code.trim()});
 
-  /// Reads the `result` integer from a TV reply, or null if absent/not JSON.
+  /// Reads the `result` from a TV reply as an int, or null if absent/not JSON.
+  /// The firmware is inconsistent: `result` may arrive as a JSON number (`1`)
+  /// or as a string (`"1"`), so we coerce both — the canonical library does the
+  /// same with `int(payload["result"])`. Accepting only `int` here was silently
+  /// dropping string acknowledgements, so a correct PIN looked like a failure.
   @visibleForTesting
   static int? resultFromJson(String text) {
     try {
       final obj = jsonDecode(text);
-      if (obj is Map && obj['result'] is int) return obj['result'] as int;
+      if (obj is Map) {
+        final raw = obj['result'];
+        if (raw is int) return raw;
+        if (raw is num) return raw.toInt();
+        if (raw is String) return int.tryParse(raw.trim());
+      }
     } catch (_) {}
     return null;
   }
@@ -133,7 +143,8 @@ class HisenseController extends RemoteController {
   Future<void> _openSession(Device device) async {
     final mac = await identity.ensure();
     _deviceTopic = deviceTopicFor(mac);
-    final clientId = 'RemoteApp/${_randomHex(8)}';
+    // No '/' or other special chars — some Hisense brokers reject such IDs.
+    final clientId = 'remoteapp-${_randomHex(8)}';
     final client = _clientFactory(
       device.host,
       device.port ?? ProtocolType.vidaa.defaultPort,
@@ -143,7 +154,7 @@ class HisenseController extends RemoteController {
       ..onBadCertificate = ((cert) => true)
       ..keepAlivePeriod = 60
       ..setProtocolV311()
-      ..logging(on: false)
+      ..logging(on: kDebugMode)
       ..connectionMessage = (MqttConnectMessage()
           .withClientIdentifier(clientId)
           .authenticateAs(username, password)
@@ -151,13 +162,28 @@ class HisenseController extends RemoteController {
 
     try {
       await client.connect().timeout(connectTimeout);
-    } catch (_) {
+    } on TimeoutException {
       client.disconnect();
-      throw const NotReachableException();
+      throw const NotReachableException(
+        'The TV did not answer on port 36669 — make sure it is on and on the '
+        'same Wi-Fi network.',
+      );
+    } catch (e) {
+      client.disconnect();
+      if (kDebugMode) {
+        debugPrint('[Hisense] connect to ${device.host} failed: $e');
+      }
+      throw NotReachableException(_describeConnectError(e));
     }
-    if (client.connectionStatus?.state != MqttConnectionState.connected) {
+
+    final status = client.connectionStatus;
+    if (status?.state != MqttConnectionState.connected) {
       client.disconnect();
-      throw const NotReachableException();
+      if (kDebugMode) {
+        debugPrint('[Hisense] not connected: state=${status?.state} '
+            'returnCode=${status?.returnCode}');
+      }
+      throw NotReachableException(_describeStatus(status));
     }
     _client = client;
     client.subscribe(mobileSubscription(_deviceTopic!), MqttQos.atMostOnce);
@@ -170,6 +196,7 @@ class HisenseController extends RemoteController {
       if (message is! MqttPublishMessage) continue;
       final text =
           MqttPublishPayload.bytesToStringAsString(message.payload.message);
+      if (kDebugMode) debugPrint('[Hisense] <= ${event.topic}: $text');
       final result = resultFromJson(text);
       if (result != null && _authResult != null && !_authResult!.isCompleted) {
         _authResult!.complete(result == 1);
@@ -277,6 +304,33 @@ class HisenseController extends RemoteController {
   void dispose() {
     _closeSession();
     super.dispose();
+  }
+
+  /// Friendly, specific reason for a failed TLS/socket connect — surfaced in the
+  /// UI snackbar so a live test points straight at the cause.
+  static String _describeConnectError(Object e) {
+    if (e is HandshakeException) {
+      return 'The TV refused the secure connection (TLS handshake failed).';
+    }
+    if (e is SocketException) {
+      return 'Could not reach the TV — connection refused or no route to it.';
+    }
+    return 'Could not open a remote session with the TV.';
+  }
+
+  /// Friendly reason when the socket connected but the MQTT login was rejected.
+  static String _describeStatus(MqttClientConnectionStatus? status) {
+    switch (status?.returnCode) {
+      case MqttConnectReturnCode.notAuthorized:
+      case MqttConnectReturnCode.badUsernameOrPassword:
+        return 'The TV rejected the remote sign-in.';
+      case MqttConnectReturnCode.identifierRejected:
+        return 'The TV rejected this client — try again.';
+      case MqttConnectReturnCode.brokerUnavailable:
+        return 'The TV’s remote service is unavailable right now.';
+      default:
+        return 'Could not open a remote session with the TV.';
+    }
   }
 
   static String _randomHex(int bytes) {

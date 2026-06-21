@@ -47,13 +47,21 @@ void main() {
       expect(jsonDecode(payload), {'authNum': '1234'});
     });
 
-    test('resultFromJson reads the result field', () {
+    test('resultFromJson reads a numeric result field', () {
       expect(HisenseController.resultFromJson('{"result":1}'), 1);
       expect(HisenseController.resultFromJson('{"result":0,"info":"x"}'), 0);
     });
 
+    test('resultFromJson coerces a string result ("1") to int', () {
+      // Some firmware returns the result as a string; treating that as a miss
+      // made a correct PIN look like a failed pairing.
+      expect(HisenseController.resultFromJson('{"result":"1"}'), 1);
+      expect(HisenseController.resultFromJson('{"result":" 0 "}'), 0);
+    });
+
     test('resultFromJson is null for non-result / non-JSON payloads', () {
       expect(HisenseController.resultFromJson('{"state":"normal"}'), isNull);
+      expect(HisenseController.resultFromJson('{"result":"abc"}'), isNull);
       expect(HisenseController.resultFromJson('not json'), isNull);
     });
   });
