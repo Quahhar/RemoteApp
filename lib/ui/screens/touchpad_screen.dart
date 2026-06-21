@@ -74,13 +74,11 @@ class TouchpadScreen extends ConsumerWidget {
       return;
     }
     final controller = ref.read(activeControllerProvider);
-    final messenger = ScaffoldMessenger.of(context);
     if (controller == null) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('No device selected — add one in Devices')),
-      );
+      promptNoDevice(context, ref);
       return;
     }
+    final messenger = ScaffoldMessenger.of(context);
     HapticFeedback.selectionClick();
     try {
       await controller.click();
@@ -239,13 +237,11 @@ class _SendBarState extends ConsumerState<_SendBar> {
     final text = _controller.text;
     if (text.isEmpty) return;
     final controller = ref.read(activeControllerProvider);
-    final messenger = ScaffoldMessenger.of(context);
     if (controller == null) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('No device selected — add one in Devices')),
-      );
+      promptNoDevice(context, ref);
       return;
     }
+    final messenger = ScaffoldMessenger.of(context);
     _controller.clear();
     HapticFeedback.selectionClick();
     _queue = _queue.then((_) async {

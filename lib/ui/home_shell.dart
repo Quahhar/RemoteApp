@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/active_device_provider.dart';
+import '../state/navigation_provider.dart';
 import '../theme/app_colors.dart';
 import 'screens/devices_screen.dart';
 import 'screens/remote_screen.dart';
@@ -22,8 +23,6 @@ class HomeShell extends ConsumerStatefulWidget {
 }
 
 class _HomeShellState extends ConsumerState<HomeShell> {
-  int _index = 0;
-
   @override
   void initState() {
     super.initState();
@@ -38,6 +37,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
+    final index = ref.watch(selectedTabProvider).index;
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: SafeArea(
@@ -51,7 +51,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             ),
             Expanded(
               child: IndexedStack(
-                index: _index,
+                index: index,
                 children: const [
                   RemoteScreen(),
                   TouchpadScreen(),
@@ -63,8 +63,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         ),
       ),
       bottomNavigationBar: _FrostedNavBar(
-        currentIndex: _index,
-        onSelect: (i) => setState(() => _index = i),
+        currentIndex: index,
+        onSelect: (i) =>
+            ref.read(selectedTabProvider.notifier).select(HomeTab.values[i]),
         items: const [
           _NavItem(Icons.settings_remote, 'Remote'),
           _NavItem(Icons.touch_app, 'Touchpad'),
