@@ -143,51 +143,98 @@ class HisenseController extends RemoteController {
   Future<void> _openSession(Device device) async {
     final mac = await identity.ensure();
     _deviceTopic = deviceTopicFor(mac);
+    final host = device.host;
+    final port = device.port ?? ProtocolType.vidaa.defaultPort;
+
+    // Firmware varies: most speak MQTT 3.1.1, some only the older 3.1. Try the
+    // common one first, then fall back before giving up.
+    MqttServerClient? connected;
+    Object? lastError;
+    MqttClientConnectionStatus? lastStatus;
+    var timedOut = false;
+
+    for (final useV311 in const [true, false]) {
+      final client = _buildClient(host, port, useV311: useV311);
+      try {
+        await client.connect().timeout(connectTimeout);
+      } on TimeoutException {
+        timedOut = true;
+        lastStatus = client.connectionStatus;
+        client.disconnect();
+        continue;
+      } catch (e) {
+        lastError = e;
+        lastStatus = client.connectionStatus;
+        if (kDebugMode) {
+          debugPrint('[Hisense] connect $host (v311=$useV311) failed: $e '
+              'status=${client.connectionStatus}');
+        }
+        client.disconnect();
+        continue;
+      }
+      if (client.connectionStatus?.state == MqttConnectionState.connected) {
+        connected = client;
+        break;
+      }
+      lastStatus = client.connectionStatus;
+      if (kDebugMode) {
+        debugPrint('[Hisense] $host (v311=$useV311) not connected: '
+            'state=${lastStatus?.state} returnCode=${lastStatus?.returnCode}');
+      }
+      client.disconnect();
+    }
+
+    if (connected == null) {
+      // Prefer the broker's own rejection reason (CONNACK code) when it gave
+      // one; otherwise classify the socket/TLS error or report the timeout.
+      if (_hasMeaningfulCode(lastStatus)) {
+        throw NotReachableException(_describeStatus(lastStatus));
+      }
+      if (timedOut) {
+        throw const NotReachableException(
+          'The TV did not answer on port 36669 — make sure it is on and on the '
+          'same Wi-Fi network.',
+        );
+      }
+      throw NotReachableException(_describeConnectError(lastError));
+    }
+
+    _client = connected;
+    connected.subscribe(mobileSubscription(_deviceTopic!), MqttQos.atMostOnce);
+    _updates = connected.updates?.listen(_onMessages);
+  }
+
+  MqttServerClient _buildClient(
+    String host,
+    int port, {
+    required bool useV311,
+  }) {
     // No '/' or other special chars — some Hisense brokers reject such IDs.
     final clientId = 'remoteapp-${_randomHex(8)}';
-    final client = _clientFactory(
-      device.host,
-      device.port ?? ProtocolType.vidaa.defaultPort,
-      clientId,
-    )
+    final client = _clientFactory(host, port, clientId)
       ..secure = true
       ..onBadCertificate = ((cert) => true)
       ..keepAlivePeriod = 60
-      ..setProtocolV311()
       ..logging(on: kDebugMode)
       ..connectionMessage = (MqttConnectMessage()
           .withClientIdentifier(clientId)
           .authenticateAs(username, password)
           .startClean());
-
-    try {
-      await client.connect().timeout(connectTimeout);
-    } on TimeoutException {
-      client.disconnect();
-      throw const NotReachableException(
-        'The TV did not answer on port 36669 — make sure it is on and on the '
-        'same Wi-Fi network.',
-      );
-    } catch (e) {
-      client.disconnect();
-      if (kDebugMode) {
-        debugPrint('[Hisense] connect to ${device.host} failed: $e');
-      }
-      throw NotReachableException(_describeConnectError(e));
+    if (useV311) {
+      client.setProtocolV311();
+    } else {
+      client.setProtocolV31();
     }
+    return client;
+  }
 
-    final status = client.connectionStatus;
-    if (status?.state != MqttConnectionState.connected) {
-      client.disconnect();
-      if (kDebugMode) {
-        debugPrint('[Hisense] not connected: state=${status?.state} '
-            'returnCode=${status?.returnCode}');
-      }
-      throw NotReachableException(_describeStatus(status));
-    }
-    _client = client;
-    client.subscribe(mobileSubscription(_deviceTopic!), MqttQos.atMostOnce);
-    _updates = client.updates?.listen(_onMessages);
+  /// True when the broker actually returned a CONNACK rejection code (so we can
+  /// report a precise reason) rather than a generic/absent one.
+  static bool _hasMeaningfulCode(MqttClientConnectionStatus? status) {
+    final rc = status?.returnCode;
+    return rc != null &&
+        rc != MqttConnectReturnCode.connectionAccepted &&
+        rc != MqttConnectReturnCode.noneSpecified;
   }
 
   void _onMessages(List<MqttReceivedMessage<MqttMessage>> events) {
@@ -308,7 +355,7 @@ class HisenseController extends RemoteController {
 
   /// Friendly, specific reason for a failed TLS/socket connect — surfaced in the
   /// UI snackbar so a live test points straight at the cause.
-  static String _describeConnectError(Object e) {
+  static String _describeConnectError(Object? e) {
     if (e is HandshakeException) {
       return 'The TV refused the secure connection (TLS handshake failed).';
     }
@@ -319,18 +366,21 @@ class HisenseController extends RemoteController {
   }
 
   /// Friendly reason when the socket connected but the MQTT login was rejected.
+  /// The raw CONNACK code is appended so a live test can tell us exactly which
+  /// rejection it is (e.g. notAuthorized = wrong credentials for this firmware).
   static String _describeStatus(MqttClientConnectionStatus? status) {
-    switch (status?.returnCode) {
-      case MqttConnectReturnCode.notAuthorized:
-      case MqttConnectReturnCode.badUsernameOrPassword:
-        return 'The TV rejected the remote sign-in.';
-      case MqttConnectReturnCode.identifierRejected:
-        return 'The TV rejected this client — try again.';
-      case MqttConnectReturnCode.brokerUnavailable:
-        return 'The TV’s remote service is unavailable right now.';
-      default:
-        return 'Could not open a remote session with the TV.';
-    }
+    final rc = status?.returnCode;
+    final reason = switch (rc) {
+      MqttConnectReturnCode.notAuthorized ||
+      MqttConnectReturnCode.badUsernameOrPassword =>
+        'The TV rejected the remote sign-in',
+      MqttConnectReturnCode.identifierRejected =>
+        'The TV rejected this client — try again',
+      MqttConnectReturnCode.brokerUnavailable =>
+        'The TV’s remote service is unavailable right now',
+      _ => 'Could not open a remote session with the TV',
+    };
+    return rc == null ? '$reason.' : '$reason (code: ${rc.name}).';
   }
 
   static String _randomHex(int bytes) {
