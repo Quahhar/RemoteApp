@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:remote/controllers/androidtv_controller.dart';
+import 'package:remote/controllers/hisense_controller.dart';
 import 'package:remote/controllers/tizen_controller.dart';
 import 'package:remote/controllers/webos_controller.dart';
 import 'package:remote/models/remote_key.dart';
@@ -49,6 +50,25 @@ void main() {
       expect(params['Cmd'], 'Click');
       expect(params['DataOfCmd'], 'KEY_HOME');
       expect(params['TypeOfRemote'], 'SendRemoteKey');
+    });
+  });
+
+  group('Hisense / VIDAA key mapping', () {
+    test('every RemoteKey maps to a KEY_ name', () {
+      for (final key in RemoteKey.values) {
+        final name = HisenseController.keyNames[key];
+        expect(name, isNotNull, reason: 'missing ${key.name}');
+        expect(name, startsWith('KEY_'));
+      }
+      expect(HisenseController.keyNames.length, RemoteKey.values.length);
+    });
+
+    test('representative mappings', () {
+      expect(HisenseController.keyNames[RemoteKey.ok], 'KEY_OK');
+      // VIDAA's navigation back is KEY_RETURNS (KEY_BACK is media-rewind).
+      expect(HisenseController.keyNames[RemoteKey.back], 'KEY_RETURNS');
+      expect(HisenseController.keyNames[RemoteKey.menu], 'KEY_MENU');
+      expect(HisenseController.keyNames[RemoteKey.volumeUp], 'KEY_VOLUMEUP');
     });
   });
 

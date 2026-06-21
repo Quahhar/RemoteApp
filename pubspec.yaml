@@ -52,6 +52,7 @@ dependencies:
   basic_utils: ^5.8.2
   pointycastle: ^4.0.0
   asn1lib: ^1.6.5
+  mqtt_client: ^10.11.11
 
 dev_dependencies:
   flutter_test:

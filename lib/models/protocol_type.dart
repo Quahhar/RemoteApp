@@ -13,7 +13,11 @@ enum ProtocolType {
   tizen(label: 'Samsung', defaultPort: 8002),
 
   /// Android TV / Google TV — TLS "remote v2" with 6-digit pairing code.
-  androidtv(label: 'Android TV', defaultPort: 6466);
+  androidtv(label: 'Android TV', defaultPort: 6466),
+
+  /// Hisense / VIDAA (and rebrands like Kenstar) — MQTT-over-TLS remote with a
+  /// 4-digit on-screen pairing code.
+  vidaa(label: 'Hisense / VIDAA TV', defaultPort: 36669);
 
   const ProtocolType({required this.label, required this.defaultPort});
 

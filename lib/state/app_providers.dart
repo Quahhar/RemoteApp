@@ -5,6 +5,7 @@ import '../controllers/controller_registry.dart';
 import '../controllers/default_registry.dart';
 import '../persistence/atv_identity_store.dart';
 import '../persistence/device_store.dart';
+import '../persistence/vidaa_identity_store.dart';
 
 /// Provides the loaded [SharedPreferences]. Overridden in `main()` with the
 /// already-resolved instance so the rest of the tree can read it synchronously.
@@ -25,6 +26,7 @@ final controllerRegistryProvider = Provider<ControllerRegistry>((ref) {
   final prefs = ref.watch(sharedPreferencesProvider);
   final registry = buildControllerRegistry(
     atvIdentity: AtvIdentityStore(prefs),
+    vidaaIdentity: VidaaIdentityStore(prefs),
   );
   ref.onDispose(registry.disposeAll);
   return registry;

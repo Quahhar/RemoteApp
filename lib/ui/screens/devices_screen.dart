@@ -182,6 +182,7 @@ IconData protocolIcon(ProtocolType protocol) => switch (protocol) {
       ProtocolType.webos => Icons.tv,
       ProtocolType.tizen => Icons.tv,
       ProtocolType.androidtv => Icons.android,
+      ProtocolType.vidaa => Icons.connected_tv,
     };
 
 class _ScanBar extends StatelessWidget {
