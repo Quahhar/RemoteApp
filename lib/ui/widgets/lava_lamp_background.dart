@@ -22,7 +22,7 @@ class _AppBackgroundState extends ConsumerState<AppBackground>
     with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 36),
+    duration: const Duration(seconds: 24),
   );
 
   @override
@@ -78,22 +78,23 @@ class _LavaPainter extends CustomPainter {
   final double t; // 0..1
 
   static const List<_Blob> _blobs = [
-    _Blob(Color(0xFFE39BD3), 0.25, 0.28, 0.00, 0.62),
-    _Blob(Color(0xFFB18CF0), 0.78, 0.42, 0.34, 0.70),
-    _Blob(Color(0xFF8FB6F2), 0.50, 0.82, 0.67, 0.66),
+    _Blob(Color(0xFFE26FC4), 0.25, 0.28, 0.00, 0.66),
+    _Blob(Color(0xFF9A6BF2), 0.78, 0.42, 0.34, 0.74),
+    _Blob(Color(0xFF5E9BF0), 0.50, 0.82, 0.67, 0.70),
   ];
 
   @override
   void paint(Canvas canvas, Size size) {
     for (final blob in _blobs) {
       final angle = 2 * math.pi * (t + blob.phase);
-      final cx = (blob.baseX + 0.12 * math.sin(angle)) * size.width;
-      final cy = (blob.baseY + 0.12 * math.cos(angle * 0.8)) * size.height;
+      final cx = (blob.baseX + 0.18 * math.sin(angle)) * size.width;
+      final cy = (blob.baseY + 0.18 * math.cos(angle * 0.8)) * size.height;
       final radius = blob.radius * size.shortestSide;
       final paint = Paint()
+        ..blendMode = BlendMode.plus
         ..shader = RadialGradient(
           colors: [
-            blob.color.withValues(alpha: 0.45),
+            blob.color.withValues(alpha: 0.55),
             blob.color.withValues(alpha: 0.0),
           ],
         ).createShader(Rect.fromCircle(center: Offset(cx, cy), radius: radius));

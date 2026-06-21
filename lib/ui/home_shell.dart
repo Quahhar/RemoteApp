@@ -109,7 +109,7 @@ class _FrostedNavBar extends StatelessWidget {
         ],
       ),
       padding:
-          EdgeInsets.only(top: 14, bottom: 12 + bottomInset, left: 10, right: 10),
+          EdgeInsets.only(top: 7, bottom: 6 + bottomInset, left: 10, right: 10),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
         children: [
@@ -143,16 +143,16 @@ class _NavButton extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(item.icon, size: 28, color: color),
-            const SizedBox(height: 5),
+            Icon(item.icon, size: 23, color: color),
+            const SizedBox(height: 2),
             Text(
               item.label,
               style: TextStyle(
-                fontSize: 13,
+                fontSize: 11,
                 fontWeight: FontWeight.w600,
                 color: color,
               ),
