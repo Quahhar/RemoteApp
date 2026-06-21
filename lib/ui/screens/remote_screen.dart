@@ -35,9 +35,7 @@ class RemoteScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 18),
           Padding(
-            // A little less inset than before → a larger dish, so the arrows
-            // sit further out toward the rim (more like a physical remote).
-            padding: const EdgeInsets.symmetric(horizontal: 58),
+            padding: const EdgeInsets.symmetric(horizontal: 80),
             child: _Dpad(onKey: (k) => pressKey(context, ref, k)),
           ),
           const SizedBox(height: 34),
@@ -181,9 +179,7 @@ class _Dpad extends StatelessWidget {
       return Align(
         alignment: align,
         child: Padding(
-          // Small inset so each arrow hugs the rim of the dish — spreads the
-          // four arrows wide around the centre OK, like a real remote.
-          padding: const EdgeInsets.all(3),
+          padding: const EdgeInsets.all(7),
           child: _PressableCircle(
             diameter: 56,
             onTap: () => onKey(key),
