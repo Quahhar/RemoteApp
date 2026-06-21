@@ -92,12 +92,19 @@ class _DeviceCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 15),
       decoration: BoxDecoration(
-        color: AppColors.cardFill,
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0x8CFFFFFF), Color(0x52FFFFFF)],
+        ),
         borderRadius: BorderRadius.circular(24),
         border: Border.all(color: AppColors.cardBorder),
         boxShadow: const [
+          // Light highlight (top-left) + soft depth (bottom-right) = raised panel.
           BoxShadow(
-              color: Color(0x1A463778), blurRadius: 24, offset: Offset(0, 8)),
+              color: Color(0x80FFFFFF), blurRadius: 12, offset: Offset(-5, -5)),
+          BoxShadow(
+              color: Color(0x1F463778), blurRadius: 18, offset: Offset(6, 8)),
         ],
       ),
       child: Row(
@@ -145,27 +152,15 @@ class _DeviceCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          InkResponse(
+          _PressableCircle(
+            diameter: 62,
             onTap: onPower,
-            radius: 36,
-            child: Container(
-              width: 62,
-              height: 62,
-              decoration: const BoxDecoration(
-                color: AppColors.powerBg,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                      color: Color(0x2EDC5A46),
-                      blurRadius: 14,
-                      offset: Offset(0, 4)),
-                ],
-              ),
-              child: Icon(
-                Icons.power_settings_new,
-                size: 28,
-                color: connected ? AppColors.powerRed : AppColors.statusGrey,
-              ),
+            topColor: const Color(0xFFFFF4F0),
+            baseColor: AppColors.powerBg,
+            child: Icon(
+              Icons.power_settings_new,
+              size: 28,
+              color: connected ? AppColors.powerRed : AppColors.statusGrey,
             ),
           ),
         ],
@@ -180,18 +175,15 @@ class _Dpad extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget chevron(RemoteKey key, IconData icon, Alignment align, EdgeInsets pad) {
+    Widget pad(RemoteKey key, IconData icon, Alignment align) {
       return Align(
         alignment: align,
         child: Padding(
-          padding: pad,
-          child: InkResponse(
+          padding: const EdgeInsets.all(7),
+          child: _PressableCircle(
+            diameter: 56,
             onTap: () => onKey(key),
-            radius: 28,
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Icon(icon, size: 30, color: AppColors.icon),
-            ),
+            child: Icon(icon, size: 28, color: AppColors.icon),
           ),
         ),
       );
@@ -200,26 +192,44 @@ class _Dpad extends StatelessWidget {
     return AspectRatio(
       aspectRatio: 1,
       child: Container(
+        // A softly raised "dish" the buttons sit on, for layered depth.
         decoration: const BoxDecoration(
           shape: BoxShape.circle,
           gradient: RadialGradient(
-            center: Alignment(0, -0.16),
-            radius: 0.72,
-            colors: [Color(0x9EFFFFFF), Color(0x4DFFFFFF)],
+            center: Alignment(0, -0.1),
+            radius: 0.82,
+            colors: [Color(0x33FFFFFF), Color(0x66FFFFFF)],
           ),
+          boxShadow: [
+            BoxShadow(
+                color: Color(0x66FFFFFF), blurRadius: 16, offset: Offset(-7, -7)),
+            BoxShadow(
+                color: Color(0x1F463778), blurRadius: 22, offset: Offset(9, 11)),
+          ],
         ),
         child: Stack(
           alignment: Alignment.center,
           children: [
-            chevron(RemoteKey.up, Icons.keyboard_arrow_up_rounded,
-                Alignment.topCenter, const EdgeInsets.only(top: 10)),
-            chevron(RemoteKey.down, Icons.keyboard_arrow_down_rounded,
-                Alignment.bottomCenter, const EdgeInsets.only(bottom: 10)),
-            chevron(RemoteKey.left, Icons.keyboard_arrow_left_rounded,
-                Alignment.centerLeft, const EdgeInsets.only(left: 6)),
-            chevron(RemoteKey.right, Icons.keyboard_arrow_right_rounded,
-                Alignment.centerRight, const EdgeInsets.only(right: 6)),
-            _OkButton(onTap: () => onKey(RemoteKey.ok)),
+            pad(RemoteKey.up, Icons.keyboard_arrow_up_rounded,
+                Alignment.topCenter),
+            pad(RemoteKey.down, Icons.keyboard_arrow_down_rounded,
+                Alignment.bottomCenter),
+            pad(RemoteKey.left, Icons.keyboard_arrow_left_rounded,
+                Alignment.centerLeft),
+            pad(RemoteKey.right, Icons.keyboard_arrow_right_rounded,
+                Alignment.centerRight),
+            _PressableCircle(
+              diameter: 84,
+              onTap: () => onKey(RemoteKey.ok),
+              child: const Text(
+                'OK',
+                style: TextStyle(
+                  fontSize: 21,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -227,33 +237,69 @@ class _Dpad extends StatelessWidget {
   }
 }
 
-class _OkButton extends StatelessWidget {
-  const _OkButton({required this.onTap});
+/// A round, raised button with a soft neumorphic look that depresses when
+/// pressed — gives the D-pad / power keys a tactile "button feel".
+class _PressableCircle extends StatefulWidget {
+  const _PressableCircle({
+    required this.diameter,
+    required this.onTap,
+    required this.child,
+    this.topColor = Colors.white,
+    this.baseColor = const Color(0xF2FFFFFF),
+  });
+
+  final double diameter;
   final VoidCallback onTap;
+  final Widget child;
+  final Color topColor;
+  final Color baseColor;
+
+  @override
+  State<_PressableCircle> createState() => _PressableCircleState();
+}
+
+class _PressableCircleState extends State<_PressableCircle> {
+  bool _down = false;
+
+  static const List<BoxShadow> _raised = [
+    BoxShadow(color: Color(0xCCFFFFFF), blurRadius: 8, offset: Offset(-4, -4)),
+    BoxShadow(color: Color(0x33463778), blurRadius: 14, offset: Offset(5, 6)),
+  ];
+  static const List<BoxShadow> _pressed = [
+    BoxShadow(color: Color(0x22463778), blurRadius: 4, offset: Offset(1, 2)),
+  ];
+
+  void _set(bool down) {
+    if (_down != down) setState(() => _down = down);
+  }
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.okFill,
-      shape: const CircleBorder(),
-      clipBehavior: Clip.antiAlias,
-      elevation: 6,
-      shadowColor: const Color(0x33463778),
-      child: InkWell(
-        onTap: onTap,
-        child: const SizedBox(
-          width: 84,
-          height: 84,
-          child: Center(
-            child: Text(
-              'OK',
-              style: TextStyle(
-                fontSize: 21,
-                fontWeight: FontWeight.w600,
-                color: AppColors.textPrimary,
-              ),
+    return GestureDetector(
+      onTapDown: (_) => _set(true),
+      onTapUp: (_) {
+        _set(false);
+        widget.onTap();
+      },
+      onTapCancel: () => _set(false),
+      child: AnimatedScale(
+        scale: _down ? 0.9 : 1,
+        duration: const Duration(milliseconds: 90),
+        curve: Curves.easeOut,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 90),
+          width: widget.diameter,
+          height: widget.diameter,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [widget.topColor, widget.baseColor],
             ),
+            boxShadow: _down ? _pressed : _raised,
           ),
+          child: Center(child: widget.child),
         ),
       ),
     );
