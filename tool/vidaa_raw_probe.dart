@@ -145,9 +145,10 @@ Future<int> attempt(String host, VidaaCredentials creds,
   rc = await connack.future
       .timeout(const Duration(seconds: 6), onTimeout: () => -1);
 
-  if (rc == 0 && pair && !closed) {
+  if (pair && !closed) {
     final c = creds.clientId;
-    print('   subscribing + vidaa_app_connect (watch the TV for a PIN)...');
+    print('   (rc=$rc, socket open) subscribing + vidaa_app_connect '
+        '(WATCH THE TV FOR A 4-DIGIT PIN)...');
     for (final t in [
       '/remoteapp/mobile/$c/ui_service/data/authentication',
       '/remoteapp/mobile/$c/ui_service/data/authenticationcode',
@@ -169,34 +170,25 @@ Future<int> attempt(String host, VidaaCredentials creds,
 }
 
 void main(List<String> args) async {
+  // args: [host] [timestampOverride] [brandOverride]
   final host = args.isNotEmpty ? args.first : '192.168.18.6';
+  final tsOverride = args.length > 1 ? int.tryParse(args[1]) : null;
+  final brandOverride = args.length > 2 ? args[2] : null;
   final desc = await fetchDescriptor(host);
-  if (desc == null) {
-    print('Could not fetch TV descriptor (UPnP). Is the TV on?');
-    exit(1);
-  }
-  final pcEpoch = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-  print('TV: brand=${desc.brand} proto=${desc.proto} tvEpoch=${desc.epoch} '
-      '(skew ${desc.epoch - pcEpoch}s vs PC)');
+  final brand = brandOverride ?? desc?.brand ?? 'ksj';
+  final ts = tsOverride ??
+      desc?.epoch ??
+      (DateTime.now().millisecondsSinceEpoch ~/ 1000);
+  print('host=$host brand=$brand ts=$ts (desc=${desc?.epoch})');
 
   ctx = SecurityContext(withTrustedRoots: false)
     ..useCertificateChain(certPath)
     ..usePrivateKey(keyPath);
 
-  // Clock sweep: try the TV epoch +/- up to 14h (1h steps) to detect a
-  // timezone/DST offset the HTTP Date header doesn't reflect.
-  print('\n### clock sweep (brand=${desc.brand}, modern) ###');
-  for (var off = -50400; off <= 50400; off += 3600) {
-    final creds = generateVidaaCredentials(
-        uuid: uuid, brand: desc.brand, timestamp: desc.epoch + off);
-    final rc = await attempt(host, creds);
-    print('   offset ${off ~/ 3600}h -> rc=$rc');
-    if (rc == 0) {
-      print('\n*** ACCEPTED at offset ${off ~/ 3600}h ***');
-      exit(0);
-    }
-  }
-  print('\nNo clock offset accepted -> not a clock issue; the credential '
-      'algorithm/constants differ for this (ksj) firmware.');
+  final creds = generateVidaaCredentials(uuid: uuid, brand: brand, timestamp: ts);
+  final rc = await attempt(host, creds, pair: true);
+  print(rc == 0
+      ? '\n*** ACCEPTED (rc=0) — credentials valid! ***'
+      : '\nrc=$rc');
   exit(0);
 }

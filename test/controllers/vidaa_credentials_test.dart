@@ -15,6 +15,19 @@ void main() {
       expect(c.password, 'C3BA44782E18ABF4892AC44D79A622D2');
     });
 
+    // Captured live from the working VIDAA app's own log (brand ksj, the user's
+    // Kenstar TV). Proves the algorithm + brand are exactly right for this TV.
+    test('matches the live ksj app capture exactly', () {
+      final c = generateVidaaCredentials(
+        uuid: '00:08:22:19:4F:A4',
+        brand: 'ksj',
+        timestamp: 1782115664,
+      );
+      expect(c.clientId, '00:08:22:19:4F:A4\$ksj\$BA7990_vidaacommon_001');
+      expect(c.username, 'ksj\$6239759786149889080');
+      expect(c.password, 'F5D274ADADE7E78EB71058B06537BBCE');
+    });
+
     test('an access token replaces the computed password', () {
       final c = generateVidaaCredentials(
         uuid: '56:b8:88:4e:f7:19',
