@@ -53,6 +53,8 @@ dependencies:
   pointycastle: ^4.0.0
   asn1lib: ^1.6.5
   mqtt_client: ^10.11.11
+  # MD5 for the VIDAA dynamic-credential algorithm.
+  crypto: ^3.0.3
 
 dev_dependencies:
   flutter_test:
