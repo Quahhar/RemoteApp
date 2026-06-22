@@ -231,7 +231,10 @@ class HisenseController extends RemoteController {
     final clientId = 'remoteapp-${_randomHex(8)}';
     final client = _clientFactory(host, port, clientId)
       ..secure = true
-      ..onBadCertificate = ((cert) => true)
+      // Param MUST be typed Object: this mqtt_client version casts the callback
+      // to `bool Function(Object)` internally; an inferred (X509Certificate)
+      // param throws a _TypeError during connect, before any network I/O.
+      ..onBadCertificate = ((Object cert) => true)
       ..keepAlivePeriod = 60
       ..logging(on: kDebugMode)
       ..connectionMessage = (MqttConnectMessage()
