@@ -10,9 +10,11 @@ import 'dart:io';
 import 'package:remote/controllers/vidaa_credentials.dart';
 
 const port = 36669;
-const certPath = 'assets/certs/vidaa_client_cert.pem';
-const keyPath = 'assets/certs/vidaa_client_key.pem';
-const uuid = 'A1:B2:C3:D4:E5:F6';
+final certPath = Platform.environment['VIDAA_CERT'] ??
+    'assets/certs/vidaa_client_cert.pem';
+final keyPath =
+    Platform.environment['VIDAA_KEY'] ?? 'assets/certs/vidaa_client_key.pem';
+var uuid = 'A1:B2:C3:D4:E5:F6';
 
 List<int> encodeLen(int len) {
   final out = <int>[];
@@ -32,8 +34,16 @@ List<int> mqttStr(String s) {
 }
 
 List<int> buildConnect(String clientId, String user, String pass) {
-  final vh = <int>[...mqttStr('MQTT'), 0x04, 0xC2, 0x00, 0x3C];
-  final payload = <int>[...mqttStr(clientId), ...mqttStr(user), ...mqttStr(pass)];
+  // Match the real VIDAA app exactly: flags 0xCE = username+password+
+  // will(QoS1)+clean, keepalive 36, Will topic "/will" message "dieout".
+  final vh = <int>[...mqttStr('MQTT'), 0x04, 0xCE, 0x00, 0x24];
+  final payload = <int>[
+    ...mqttStr(clientId),
+    ...mqttStr('/will'),
+    ...mqttStr('dieout'),
+    ...mqttStr(user),
+    ...mqttStr(pass),
+  ];
   final body = [...vh, ...payload];
   return [0x10, ...encodeLen(body.length), ...body];
 }
@@ -174,6 +184,7 @@ void main(List<String> args) async {
   final host = args.isNotEmpty ? args.first : '192.168.18.6';
   final tsOverride = args.length > 1 ? int.tryParse(args[1]) : null;
   final brandOverride = args.length > 2 ? args[2] : null;
+  if (args.length > 3 && args[3].isNotEmpty) uuid = args[3];
   final desc = await fetchDescriptor(host);
   final brand = brandOverride ?? desc?.brand ?? 'ksj';
   final ts = tsOverride ??
@@ -185,7 +196,8 @@ void main(List<String> args) async {
     ..useCertificateChain(certPath)
     ..usePrivateKey(keyPath);
 
-  final creds = generateVidaaCredentials(uuid: uuid, brand: brand, timestamp: ts);
+  final creds = generateVidaaCredentials(
+      uuid: uuid, brand: brand, operation: 'secure', timestamp: ts);
   final rc = await attempt(host, creds, pair: true);
   print(rc == 0
       ? '\n*** ACCEPTED (rc=0) — credentials valid! ***'

@@ -249,8 +249,14 @@ class WebosController extends RemoteController {
     if (input == null) {
       throw const RemoteException('Pointer input socket unavailable');
     }
-    input.sink.add('type:button\nname:${buttonNames[key]}\n\n');
+    input.sink.add(buttonFrame(key));
   }
+
+  /// The exact webOS input-socket frame for a button press. Pure + exposed for
+  /// unit tests.
+  @visibleForTesting
+  static String buttonFrame(RemoteKey key) =>
+      'type:button\nname:${buttonNames[key]}\n\n';
 
   @override
   Future<void> movePointer(double dx, double dy) async {

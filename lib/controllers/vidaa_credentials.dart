@@ -34,7 +34,10 @@ const String _pattern = '38D65DC30F45109A369A86FCE866A85B';
 const String _valueSuffixModern = 'h!i@s#\$v%i^d&a*a'; // protocol >= 3290
 const String _valueSuffixLegacy = 'h*i&s%e!r^v0i1c9'; // protocol < 3290
 const int _timeXorConstant = 0x569814772b03a968;
-const String _operation = 'vidaacommon';
+// The local MQTT connect uses operation "secure" in the client id (the app's
+// getConnectUser logs show "vidaacommon"/"vidaavoice", but the actual on-the-
+// wire connect captured from the app uses "secure").
+const String kVidaaSecureOperation = 'secure';
 
 /// Picks the auth variant for a `transport_protocol` version.
 VidaaAuthMethod vidaaAuthMethodFor(int protocolVersion) {
@@ -66,6 +69,7 @@ int _sumDigits(int n) {
 VidaaCredentials generateVidaaCredentials({
   required String uuid,
   String brand = kDefaultVidaaBrand,
+  String operation = 'vidaacommon',
   VidaaAuthMethod authMethod = VidaaAuthMethod.modern,
   int? timestamp,
   String? accessToken,
@@ -74,7 +78,7 @@ VidaaCredentials generateVidaaCredentials({
 
   final race = '$_pattern\$$uuid';
   final raceMd5 = _md5Upper(race).substring(0, 6);
-  final clientId = '$uuid\$$brand\$${raceMd5}_${_operation}_001';
+  final clientId = '$uuid\$$brand\$${raceMd5}_${operation}_001';
 
   // LEGACY uses a plain timestamp; MIDDLE/MODERN XOR it.
   final String username;

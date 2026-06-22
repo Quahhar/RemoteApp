@@ -24,6 +24,12 @@ void main() {
       expect(WebosController.buttonNames[RemoteKey.volumeUp], 'VOLUMEUP');
       expect(WebosController.buttonNames[RemoteKey.channelDown], 'CHANNELDOWN');
     });
+
+    test('buttonFrame is the exact input-socket wire format', () {
+      expect(WebosController.buttonFrame(RemoteKey.up), 'type:button\nname:UP\n\n');
+      expect(
+          WebosController.buttonFrame(RemoteKey.ok), 'type:button\nname:ENTER\n\n');
+    });
   });
 
   group('Samsung Tizen key mapping', () {
