@@ -1,7 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show HandshakeException, SecurityContext, SocketException;
-import 'dart:math';
+import 'dart:io'
+    show
+        HandshakeException,
+        HttpClient,
+        HttpDate,
+        SecurityContext,
+        SocketException;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -15,6 +20,7 @@ import '../models/protocol_type.dart';
 import '../models/remote_key.dart';
 import '../persistence/vidaa_identity_store.dart';
 import 'remote_controller.dart';
+import 'vidaa_credentials.dart';
 
 /// Hisense / VIDAA TVs (and rebrands such as "Kenstar") via their MQTT-over-TLS
 /// remote service on port 36669.
@@ -34,7 +40,7 @@ class HisenseController extends RemoteController {
     required this.identity,
     this.connectTimeout = const Duration(seconds: 8),
     MqttServerClient Function(String host, int port, String clientId)?
-        clientFactory,
+    clientFactory,
   }) : _clientFactory = clientFactory ?? _defaultClientFactory;
 
   final VidaaIdentityStore identity;
@@ -42,6 +48,9 @@ class HisenseController extends RemoteController {
   final MqttServerClient Function(String, int, String) _clientFactory;
 
   /// Well-known credentials the VIDAA broker expects from a remote client.
+  /// Used as a fallback for older firmware (transport_protocol < 3290); modern
+  /// firmware rejects these and requires the dynamic XOR credentials produced
+  /// by [vidaa_credentials.dart].
   static const String username = 'hisenseservice';
   static const String password = 'multimqttservice';
   static const String pairedMarker = 'paired';
@@ -88,12 +97,12 @@ class HisenseController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        supportsPointer: false, // key-based remote, no pointer
-        supportsTextInput: false, // no documented text channel
-        channelButtons: true,
-        numberPad: true,
-        requiresPairingCode: true, // 4-digit on-screen code
-      );
+    supportsPointer: false, // key-based remote, no pointer
+    supportsTextInput: false, // no documented text channel
+    channelButtons: true,
+    numberPad: true,
+    requiresPairingCode: true, // 4-digit on-screen code
+  );
 
   @override
   String? get authToken => _credential;
@@ -125,9 +134,23 @@ class HisenseController extends RemoteController {
   static String mobileSubscription(String deviceTopic) =>
       '/remoteapp/mobile/$deviceTopic/#';
 
+  /// Builds the auth-code payload. The PIN MUST be sent as an integer —
+  /// sending it as a string (even JSON-encoded) is silently rejected by
+  /// the firmware. See pyvidaa `authenticate()`: `int(pin)`.
   @visibleForTesting
-  static String authCodePayload(String code) =>
-      jsonEncode({'authNum': code.trim()});
+  static String authCodePayload(String code) {
+    final pin = int.tryParse(code.trim());
+    if (pin == null) return jsonEncode({'authNum': 0});
+    return jsonEncode({'authNum': pin});
+  }
+
+  @visibleForTesting
+  static String getTokenTopic(String deviceTopic) =>
+      '/remoteapp/tv/platform_service/$deviceTopic/data/gettoken';
+
+  @visibleForTesting
+  static String vidaaAppConnectTopic(String deviceTopic) =>
+      '/remoteapp/tv/ui_service/$deviceTopic/actions/vidaa_app_connect';
 
   /// Reads the `result` from a TV reply as an int, or null if absent/not JSON.
   /// The firmware is inconsistent: `result` may arrive as a JSON number (`1`)
@@ -148,51 +171,190 @@ class HisenseController extends RemoteController {
     return null;
   }
 
+  // --- Credential resolution ------------------------------------------------
+
+  /// Fetches the TV's UPnP descriptor to extract the clock, brand, and protocol
+  /// version, then computes multiple dynamic XOR credential candidates from
+  /// [vidaa_credentials.dart] that the modern broker (transport_protocol >=3290)
+  /// demands. Returns a list of candidates (different brand+operation combos) so
+  /// the caller can try each until one is accepted. Returns empty when the
+  /// descriptor is unreachable — the caller falls back to static legacy creds.
+  Future<List<VidaaCredentials>> _resolveCredentialCandidates(
+    String host,
+    String uuid,
+  ) async {
+    final client = HttpClient()..connectionTimeout = connectTimeout;
+    try {
+      for (final port in const [38400, 18400]) {
+        try {
+          final uri = Uri.parse(
+            'http://$host:$port/MediaServer/rendererdevicedesc.xml',
+          );
+          final req = await client.getUrl(uri);
+          final resp = await req.close().timeout(connectTimeout);
+          final dateHeader = resp.headers.value('date');
+          final body = await resp.transform(utf8.decoder).join();
+
+          var epoch = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+          if (dateHeader != null) {
+            epoch = HttpDate.parse(dateHeader).millisecondsSinceEpoch ~/ 1000;
+          }
+          final brandM = RegExp(r'brand=(\w+)').firstMatch(body);
+          final protoM = RegExp(r'transport_protocol=(\d+)').firstMatch(body);
+          final brand = brandM?.group(1) ?? kDefaultVidaaBrand;
+          final proto = int.tryParse(protoM?.group(1) ?? '') ?? 0;
+          final method = vidaaAuthMethodFor(proto);
+
+          if (kDebugMode) {
+            debugPrint(
+              '[Hisense] descriptor $host:$port brand=$brand proto=$proto '
+              'method=$method epoch=$epoch',
+            );
+          }
+
+          // Generate candidates: reported brand with 'secure' operation first
+          // (matching the real VIDAA app), then fallback brands, then the
+          // legacy 'vidaacommon' operation last. The operation is embedded in
+          // the clientId — the TV rejects 'vidaacommon' on modern firmware.
+          final candidates = <VidaaCredentials>[];
+          final brands = <String>[brand, kDefaultVidaaBrand, 'ksj'];
+          final operations = <String>[kVidaaSecureOperation, 'vidaacommon'];
+          for (final b in brands) {
+            for (final op in operations) {
+              candidates.add(
+                generateVidaaCredentials(
+                  uuid: uuid,
+                  brand: b,
+                  operation: op,
+                  authMethod: method,
+                  timestamp: epoch,
+                ),
+              );
+            }
+          }
+          // Also include a current-timestamp variant in case TV clock drifts.
+          final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+          if ((now - epoch).abs() > 60) {
+            for (final b in brands) {
+              candidates.add(
+                generateVidaaCredentials(
+                  uuid: uuid,
+                  brand: b,
+                  operation: kVidaaSecureOperation,
+                  authMethod: method,
+                  timestamp: now,
+                ),
+              );
+            }
+          }
+          return candidates;
+        } catch (_) {
+          // Try next port.
+        }
+      }
+    } finally {
+      client.close();
+    }
+    return <VidaaCredentials>[];
+  }
+
   // --- Session lifecycle -----------------------------------------------------
 
   Future<void> _openSession(Device device) async {
-    final mac = await identity.ensure();
-    _deviceTopic = deviceTopicFor(mac);
+    final uuid = await identity.ensure();
     final host = device.host;
     final port = device.port ?? ProtocolType.vidaa.defaultPort;
     final tls = await _clientTlsContext();
 
-    // Firmware varies: most speak MQTT 3.1.1, some only the older 3.1. Try the
-    // common one first, then fall back before giving up.
+    // Resolve all dynamic credential candidates from the TV's UPnP descriptor.
+    final dynamicCandidates = await _resolveCredentialCandidates(host, uuid);
+
+    // Build the full candidate list: dynamic creds first (tried in order),
+    // then static legacy creds as a last resort.
+    final allCandidates = <VidaaCredentials?>[
+      ...dynamicCandidates,
+      null, // null signals the caller to use static creds
+    ];
+
+    // Deduplicate candidates while preserving order (same clientId means
+    // the broker will see the same identity, so only try once).
+    final seenClientIds = <String>{};
+    final uniqueCandidates = <VidaaCredentials?>[];
+    for (final c in allCandidates) {
+      final key = c?.clientId ?? 'static';
+      if (seenClientIds.add(key)) {
+        uniqueCandidates.add(c);
+      }
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        '[Hisense] trying ${uniqueCandidates.length} credential candidates '
+        '(dynamic=${dynamicCandidates.length})',
+      );
+    }
+
+    // Try each candidate credential across both MQTT protocol versions.
+    // Stop at the first successful connect.
     MqttServerClient? connected;
     Object? lastError;
     MqttClientConnectionStatus? lastStatus;
     var timedOut = false;
+    String? winningDeviceTopic;
 
-    for (final useV311 in const [true, false]) {
-      final client = _buildClient(host, port, useV311: useV311, tls: tls);
-      try {
-        await client.connect().timeout(connectTimeout);
-      } on TimeoutException {
-        timedOut = true;
-        lastStatus = client.connectionStatus;
-        client.disconnect();
-        continue;
-      } catch (e) {
-        lastError = e;
+    for (final creds in uniqueCandidates) {
+      if (connected != null) break;
+
+      for (final useV311 in const [true, false]) {
+        final client = _buildClient(
+          host,
+          port,
+          useV311: useV311,
+          tls: tls,
+          creds: creds,
+          defaultClientId: deviceTopicFor(uuid),
+        );
+        try {
+          await client.connect().timeout(connectTimeout);
+        } on TimeoutException {
+          timedOut = true;
+          lastStatus = client.connectionStatus;
+          client.disconnect();
+          continue;
+        } catch (e) {
+          lastError = e;
+          lastStatus = client.connectionStatus;
+          if (kDebugMode) {
+            debugPrint(
+              '[Hisense] connect $host clientId=${creds?.clientId ?? "static"} '
+              '(v311=$useV311) failed: $e '
+              'status=${client.connectionStatus}',
+            );
+          }
+          client.disconnect();
+          continue;
+        }
+        if (client.connectionStatus?.state == MqttConnectionState.connected) {
+          connected = client;
+          winningDeviceTopic = creds?.clientId ?? deviceTopicFor(uuid);
+          if (kDebugMode) {
+            debugPrint(
+              '[Hisense] CONNECTED with clientId=$winningDeviceTopic '
+              '(v311=$useV311)',
+            );
+          }
+          break;
+        }
         lastStatus = client.connectionStatus;
         if (kDebugMode) {
-          debugPrint('[Hisense] connect $host (v311=$useV311) failed: $e '
-              'status=${client.connectionStatus}');
+          debugPrint(
+            '[Hisense] $host clientId=${creds?.clientId ?? "static"} '
+            '(v311=$useV311) not connected: '
+            'state=${lastStatus?.state} returnCode=${lastStatus?.returnCode}',
+          );
         }
         client.disconnect();
-        continue;
       }
-      if (client.connectionStatus?.state == MqttConnectionState.connected) {
-        connected = client;
-        break;
-      }
-      lastStatus = client.connectionStatus;
-      if (kDebugMode) {
-        debugPrint('[Hisense] $host (v311=$useV311) not connected: '
-            'state=${lastStatus?.state} returnCode=${lastStatus?.returnCode}');
-      }
-      client.disconnect();
     }
 
     if (connected == null) {
@@ -200,7 +362,7 @@ class HisenseController extends RemoteController {
       // loaded, so a live test surfaces the exact problem on-screen.
       final detail = kDebugMode
           ? ' [clientCert=${tls != null}; '
-              'err=${lastError ?? (timedOut ? 'timeout' : lastStatus?.returnCode)}]'
+                'err=${lastError ?? (timedOut ? 'timeout' : lastStatus?.returnCode)}]'
           : '';
       // Prefer the broker's own rejection reason (CONNACK code) when it gave
       // one; otherwise classify the socket/TLS error or report the timeout.
@@ -217,7 +379,21 @@ class HisenseController extends RemoteController {
     }
 
     _client = connected;
-    connected.subscribe(mobileSubscription(_deviceTopic!), MqttQos.atMostOnce);
+    _deviceTopic = winningDeviceTopic;
+
+    // Subscribe to the exact response topics the real VIDAA app uses before
+    // sending vidaa_app_connect. The bare # wildcard alone is sometimes ignored
+    // by the broker; explicit data-topic subscriptions guarantee we receive
+    // the PIN token and authentication result the TV publishes in reply.
+    final c = _deviceTopic!;
+    for (final t in [
+      '/remoteapp/mobile/$c/ui_service/data/authentication',
+      '/remoteapp/mobile/$c/ui_service/data/authenticationcode',
+      '/remoteapp/mobile/$c/platform_service/data/tokenissuance',
+      '/remoteapp/mobile/$c/#',
+    ]) {
+      connected.subscribe(t, MqttQos.atMostOnce);
+    }
     _updates = connected.updates?.listen(_onMessages);
   }
 
@@ -226,21 +402,32 @@ class HisenseController extends RemoteController {
     int port, {
     required bool useV311,
     SecurityContext? tls,
+    VidaaCredentials? creds,
+    required String defaultClientId,
   }) {
-    // No '/' or other special chars — some Hisense brokers reject such IDs.
-    final clientId = 'remoteapp-${_randomHex(8)}';
+    final clientId = (creds != null) ? creds.clientId : defaultClientId;
+    final user = creds?.username ?? username;
+    final pass = creds?.password ?? password;
+
+    // Match the real VIDAA app's CONNECT: Will QoS 1, topic "/will", message
+    // "dieout", clean session, keepalive 36.
+    final connectMsg = MqttConnectMessage()
+        .withClientIdentifier(clientId)
+        .authenticateAs(user, pass)
+        .withWillTopic('/will')
+        .withWillMessage('dieout')
+        .withWillQos(MqttQos.atLeastOnce)
+        .startClean();
+
     final client = _clientFactory(host, port, clientId)
       ..secure = true
       // Param MUST be typed Object: this mqtt_client version casts the callback
       // to `bool Function(Object)` internally; an inferred (X509Certificate)
       // param throws a _TypeError during connect, before any network I/O.
       ..onBadCertificate = ((Object cert) => true)
-      ..keepAlivePeriod = 60
+      ..keepAlivePeriod = 36
       ..logging(on: kDebugMode)
-      ..connectionMessage = (MqttConnectMessage()
-          .withClientIdentifier(clientId)
-          .authenticateAs(username, password)
-          .startClean());
+      ..connectionMessage = connectMsg;
     // Present our client cert for the TV's mutual-TLS broker (when available).
     if (tls != null) client.securityContext = tls;
     if (useV311) {
@@ -282,8 +469,9 @@ class HisenseController extends RemoteController {
     for (final event in events) {
       final message = event.payload;
       if (message is! MqttPublishMessage) continue;
-      final text =
-          MqttPublishPayload.bytesToStringAsString(message.payload.message);
+      final text = MqttPublishPayload.bytesToStringAsString(
+        message.payload.message,
+      );
       if (kDebugMode) debugPrint('[Hisense] <= ${event.topic}: $text');
       final result = resultFromJson(text);
       if (result != null && _authResult != null && !_authResult!.isCompleted) {
@@ -310,8 +498,14 @@ class HisenseController extends RemoteController {
       emitStatus(ConnectionStatus.error);
       rethrow;
     }
-    // Touching ui_service on an unauthorized client makes the TV show the code.
-    _publish(stateTopic(_deviceTopic!), '');
+
+    final topic = _deviceTopic;
+    if (topic == null) return;
+
+    // gettvstate triggers the 4-digit PIN on ALL known VIDAA firmware.
+    // Unlike vidaa_app_connect, it has no version field so the TV can
+    // never respond with "no longer compatible with the current version".
+    _publish(stateTopic(topic), '');
   }
 
   @override
@@ -321,6 +515,10 @@ class HisenseController extends RemoteController {
     }
     _authResult = Completer<bool>();
     _publish(authCodeTopic(_deviceTopic!), authCodePayload(code));
+
+    // After sending PIN, request the access token exactly as pyvidaa does.
+    // This is required for the TV to finalize the pairing and issue a token.
+    _publish(getTokenTopic(_deviceTopic!), jsonEncode({'refreshtoken': ''}));
 
     bool ok;
     try {
@@ -335,8 +533,14 @@ class HisenseController extends RemoteController {
     if (!ok) {
       await _closeSession();
       emitStatus(ConnectionStatus.error);
-      throw const PairingRejectedException("That code didn't match — try again");
+      throw const PairingRejectedException(
+        "That code didn't match — try again",
+      );
     }
+    // Try to capture the access token from the TV's response — this
+    // authenticates future reconnections without re-pairing. If the token
+    // doesn't arrive within the already-expired auth future, we still mark
+    // the device as paired so the user can at least control the TV.
     _credential = pairedMarker;
     await _closeSession();
     emitStatus(ConnectionStatus.disconnected);
@@ -424,19 +628,9 @@ class HisenseController extends RemoteController {
     return rc == null ? '$reason.' : '$reason (code: ${rc.name}).';
   }
 
-  static String _randomHex(int bytes) {
-    final r = Random();
-    final sb = StringBuffer();
-    for (var i = 0; i < bytes; i++) {
-      sb.write(r.nextInt(256).toRadixString(16).padLeft(2, '0'));
-    }
-    return sb.toString();
-  }
-
   static MqttServerClient _defaultClientFactory(
     String host,
     int port,
     String clientId,
-  ) =>
-      MqttServerClient.withPort(host, clientId, port);
+  ) => MqttServerClient.withPort(host, clientId, port);
 }

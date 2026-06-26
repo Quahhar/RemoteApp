@@ -34,9 +34,6 @@ const String _pattern = '38D65DC30F45109A369A86FCE866A85B';
 const String _valueSuffixModern = 'h!i@s#\$v%i^d&a*a'; // protocol >= 3290
 const String _valueSuffixLegacy = 'h*i&s%e!r^v0i1c9'; // protocol < 3290
 const int _timeXorConstant = 0x569814772b03a968;
-// The local MQTT connect uses operation "secure" in the client id (the app's
-// getConnectUser logs show "vidaacommon"/"vidaavoice", but the actual on-the-
-// wire connect captured from the app uses "secure").
 const String kVidaaSecureOperation = 'secure';
 
 /// Picks the auth variant for a `transport_protocol` version.

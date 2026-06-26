@@ -42,9 +42,10 @@ void main() {
   });
 
   group('pairing payload + result parsing', () {
-    test('auth-code payload is JSON {authNum: <trimmed code>}', () {
+    test('auth-code payload is JSON {authNum: <integer code>}', () {
+      // pyvidaa sends int(pin) — the TV rejects string authNum.
       final payload = HisenseController.authCodePayload('  1234 ');
-      expect(jsonDecode(payload), {'authNum': '1234'});
+      expect(jsonDecode(payload), {'authNum': 1234});
     });
 
     test('resultFromJson reads a numeric result field', () {
