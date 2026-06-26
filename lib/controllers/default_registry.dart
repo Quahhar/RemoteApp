@@ -3,6 +3,7 @@ import '../persistence/atv_identity_store.dart';
 import '../persistence/vidaa_identity_store.dart';
 import 'androidtv_controller.dart';
 import 'controller_registry.dart';
+import 'dlna_controller.dart';
 import 'hisense_controller.dart';
 import 'roku_controller.dart';
 import 'tizen_controller.dart';
@@ -21,4 +22,5 @@ ControllerRegistry buildControllerRegistry({
       ProtocolType.tizen: () => TizenController(),
       ProtocolType.androidtv: () => AndroidTvController(identity: atvIdentity),
       ProtocolType.vidaa: () => HisenseController(identity: vidaaIdentity),
+      ProtocolType.dlna: () => DlnaController(),
     });

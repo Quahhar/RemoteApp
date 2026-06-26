@@ -17,7 +17,13 @@ enum ProtocolType {
 
   /// Hisense / VIDAA (and rebrands like Kenstar) — MQTT-over-TLS remote with a
   /// 4-digit on-screen pairing code.
-  vidaa(label: 'Hisense / VIDAA TV', defaultPort: 36669);
+  vidaa(label: 'Hisense / VIDAA TV', defaultPort: 36669),
+
+  /// UPnP/DLNA MediaRenderer — unauthenticated SOAP over HTTP. The universal
+  /// fallback: volume/mute + play/pause/stop and "cast a URL to the TV". Works on
+  /// many TVs (default port is VIDAA's renderer, 18400), including modern VIDAA
+  /// sets whose MQTT remote is firmware-locked.
+  dlna(label: 'Cast / DLNA', defaultPort: 18400);
 
   const ProtocolType({required this.label, required this.defaultPort});
 

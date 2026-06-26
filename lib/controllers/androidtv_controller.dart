@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
+import 'package:multicast_dns/multicast_dns.dart';
 
 import '../models/capabilities.dart';
 import '../models/connection_status.dart';
@@ -39,6 +41,9 @@ class AndroidTvController extends RemoteController {
   static const int _pairingPort = 6467;
   static const int _remotePort = 6466;
   static const String pairedMarker = 'paired';
+
+  /// The mDNS service Android TVs advertise their Remote v2 endpoint under.
+  static const String _mdnsService = '_androidtvremote2._tcp';
 
   SecureSocket? _remote;
   FrameReader _remoteFrames = FrameReader();
@@ -88,10 +93,138 @@ class AndroidTvController extends RemoteController {
   @override
   String? get authToken => _credential;
 
-  /// mDNS discovery is a later addition; add devices manually for now.
+  /// Auto-discovers Android TVs by browsing the `_androidtvremote2._tcp` mDNS
+  /// service the TV advertises, yielding each with its on-TV friendly name. The
+  /// cross-protocol LAN port scan also finds them (as a generic "Android TV
+  /// (ip)") as a fallback; these named results win de-duplication because the
+  /// port scan starts a moment later. Best-effort: any mDNS failure (e.g. a
+  /// platform without a multicast lock) just yields nothing and leaves the port
+  /// scan to cover it.
   @override
-  Stream<Device> discover({Duration timeout = const Duration(seconds: 5)}) =>
-      const Stream<Device>.empty();
+  Stream<Device> discover({Duration timeout = const Duration(seconds: 5)}) {
+    final out = StreamController<Device>();
+    final seen = <String>{};
+    final client = _mdnsClient();
+    var started = false;
+    var stopped = false;
+
+    void stop() {
+      if (started && !stopped) {
+        stopped = true;
+        client.stop();
+      }
+    }
+
+    Future<void> run() async {
+      try {
+        await client.start();
+        started = true;
+      } catch (_) {
+        // start() can fail partway (e.g. desktop without multicast support);
+        // stop() defensively in case a socket was opened before it threw.
+        try {
+          client.stop();
+        } catch (_) {}
+        if (!out.isClosed) await out.close();
+        return;
+      }
+      try {
+        await for (final ptr in client.lookup<PtrResourceRecord>(
+          ResourceRecordQuery.serverPointer('$_mdnsService.local'),
+          timeout: timeout,
+        )) {
+          final name = instanceName(ptr.domainName);
+          await for (final srv in client.lookup<SrvResourceRecord>(
+            ResourceRecordQuery.service(ptr.domainName),
+            timeout: timeout,
+          )) {
+            await for (final ip in client.lookup<IPAddressResourceRecord>(
+              ResourceRecordQuery.addressIPv4(srv.target),
+              timeout: timeout,
+            )) {
+              final host = ip.address.address;
+              if (!seen.add(host)) continue;
+              if (out.isClosed) return;
+              // Port is left default: the SRV port (6466) is the *remote* port,
+              // but beginPairing needs 6467 — see _pairingPort/_remotePort.
+              out.add(
+                Device(
+                  id: 'androidtv-$host',
+                  name: name.isEmpty ? 'Android TV ($host)' : name,
+                  host: host,
+                  protocol: ProtocolType.androidtv,
+                ),
+              );
+            }
+          }
+        }
+      } catch (_) {
+        // Best-effort; the LAN port scan is the fallback.
+      } finally {
+        stop();
+        if (!out.isClosed) await out.close();
+      }
+    }
+
+    out.onListen = run;
+    out.onCancel = stop;
+    return out.stream;
+  }
+
+  /// Builds an [MDnsClient] that binds without `reusePort` (which Windows — used
+  /// for desktop testing — doesn't support); the default would throw there.
+  static MDnsClient _mdnsClient() => MDnsClient(
+        rawDatagramSocketFactory: (
+          dynamic host,
+          int port, {
+          bool reuseAddress = true,
+          bool reusePort = true,
+          int ttl = 1,
+        }) =>
+            RawDatagramSocket.bind(
+              host,
+              port,
+              reuseAddress: reuseAddress,
+              reusePort: false,
+              ttl: ttl,
+            ),
+      );
+
+  /// Extracts the human-readable instance (friendly) name from an mDNS PTR
+  /// domain like `Living Room TV._androidtvremote2._tcp.local`, DNS-SD-unescaping
+  /// the instance label (`\DDD` decimal escapes and `\x` literal escapes such as
+  /// `\.`, `\\`, `\ `). Returns '' when the domain isn't this service.
+  @visibleForTesting
+  static String instanceName(String ptrDomain) {
+    var s = ptrDomain.endsWith('.')
+        ? ptrDomain.substring(0, ptrDomain.length - 1)
+        : ptrDomain;
+    final marker = '.$_mdnsService';
+    final idx = s.indexOf(marker);
+    if (idx < 0) return '';
+    final label = s.substring(0, idx);
+
+    final sb = StringBuffer();
+    var i = 0;
+    while (i < label.length) {
+      final ch = label[i];
+      if (ch == r'\' && i + 1 < label.length) {
+        final rest = label.substring(i + 1);
+        final dec = RegExp(r'^[0-9]{3}').firstMatch(rest);
+        if (dec != null) {
+          sb.writeCharCode(int.parse(dec.group(0)!));
+          i += 4; // backslash + three digits
+          continue;
+        }
+        sb.write(label[i + 1]); // escaped literal: \. \\ \  etc.
+        i += 2;
+        continue;
+      }
+      sb.write(ch);
+      i++;
+    }
+    return sb.toString();
+  }
 
   SecurityContext _securityContext(AtvIdentity id) {
     return SecurityContext(withTrustedRoots: false)
@@ -197,10 +330,22 @@ class AndroidTvController extends RemoteController {
   }
 
   void _failPairing(Object error) {
-    _codeReady?.completeError(const PairingRejectedException());
-    _secretAck?.completeError(const PairingRejectedException());
+    // Guard against completing an already-completed completer (e.g. _codeReady
+    // is completed-but-non-null once the code is shown) — an unguarded
+    // completeError would throw inside this socket callback.
+    _failOnce(_codeReady);
+    _failOnce(_secretAck);
     _codeReady = null;
     _secretAck = null;
+    // Close/null the dead pairing socket so beginPairing()/completePairing()
+    // don't reuse or leak it. Fire-and-forget; _closePairing() is idempotent.
+    _closePairing();
+  }
+
+  void _failOnce(Completer<void>? c) {
+    if (c != null && !c.isCompleted) {
+      c.completeError(const PairingRejectedException());
+    }
   }
 
   Future<void> _closePairing() async {
@@ -290,9 +435,13 @@ class AndroidTvController extends RemoteController {
     if (_active != null && !_active!.isCompleted) {
       _active!.completeError(const ConnectionLostException());
     }
+    _active = null;
     if (status == ConnectionStatus.connected) {
       emitStatus(ConnectionStatus.error);
     }
+    // Close/null the dead control socket so sendKey() doesn't write to it and a
+    // later connect() doesn't leak it. Fire-and-forget; _closeRemote() is idempotent.
+    _closeRemote();
   }
 
   Future<void> _closeRemote() async {

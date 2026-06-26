@@ -12,6 +12,8 @@ class Capabilities {
     this.channelButtons = true,
     this.numberPad = false,
     this.requiresPairingCode = false,
+    this.supportsNavigation = true,
+    this.supportsPower = true,
   });
 
   /// Supports free pointer/touchpad movement (relative cursor moves + click).
@@ -32,6 +34,15 @@ class Capabilities {
   /// they leave this false.)
   final bool requiresPairingCode;
 
+  /// Supports D-pad navigation (arrows + OK) and the back/home/menu cluster.
+  /// False for media-renderer-only links such as DLNA, which expose no
+  /// navigation commands at all — the UI greys those buttons out so they don't
+  /// look broken.
+  final bool supportsNavigation;
+
+  /// Supports a power on/off command. False for DLNA (UPnP has no power action).
+  final bool supportsPower;
+
   @override
   bool operator ==(Object other) =>
       other is Capabilities &&
@@ -39,9 +50,12 @@ class Capabilities {
       other.supportsTextInput == supportsTextInput &&
       other.channelButtons == channelButtons &&
       other.numberPad == numberPad &&
-      other.requiresPairingCode == requiresPairingCode;
+      other.requiresPairingCode == requiresPairingCode &&
+      other.supportsNavigation == supportsNavigation &&
+      other.supportsPower == supportsPower;
 
   @override
   int get hashCode => Object.hash(supportsPointer, supportsTextInput,
-      channelButtons, numberPad, requiresPairingCode);
+      channelButtons, numberPad, requiresPairingCode, supportsNavigation,
+      supportsPower);
 }
