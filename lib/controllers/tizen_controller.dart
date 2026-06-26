@@ -169,17 +169,27 @@ class TizenController extends RemoteController {
 
   // --- Connection ------------------------------------------------------------
 
+  /// The `samsung.remote.control` WebSocket URL. `wss` for the secure 8002
+  /// endpoint, `ws` for the legacy 8001 one. Both query params are
+  /// percent-encoded (the base64 `name` can contain `+`/`/`/`=`, and the TV's
+  /// token is opaque) so the URL stays well-formed. Pure + exposed for tests.
+  @visibleForTesting
+  static String channelUri(String host, int port, String appName, String? token) {
+    final scheme = port == 8001 ? 'ws' : 'wss';
+    final name = Uri.encodeQueryComponent(base64.encode(utf8.encode(appName)));
+    final tok =
+        token == null ? '' : '&token=${Uri.encodeQueryComponent(token)}';
+    return '$scheme://$host:$port/api/v2/channels/samsung.remote.control'
+        '?name=$name$tok';
+  }
+
   @override
   Future<void> connect(Device device) async {
     emitStatus(ConnectionStatus.connecting);
     _token = device.authToken;
-    final nameParam = base64.encode(utf8.encode(appName));
     final port = device.effectivePort;
     final scheme = port == 8001 ? 'ws' : 'wss';
-    final tokenParam = _token == null ? '' : '&token=$_token';
-    final url =
-        '$scheme://${device.host}:$port/api/v2/channels/samsung.remote.control'
-        '?name=$nameParam$tokenParam';
+    final url = channelUri(device.host, port, appName, _token);
 
     try {
       final WebSocket socket;
@@ -267,6 +277,9 @@ class TizenController extends RemoteController {
     if (status == ConnectionStatus.connected) {
       emitStatus(ConnectionStatus.error);
     }
+    // Close/null the dead socket so sendKey/sendText don't write to it and a
+    // later connect() doesn't leak it. Fire-and-forget; _teardown() is idempotent.
+    _teardown();
   }
 
   Future<void> _teardown() async {

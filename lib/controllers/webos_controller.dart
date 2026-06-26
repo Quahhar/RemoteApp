@@ -342,6 +342,10 @@ class WebosController extends RemoteController {
     if (status == ConnectionStatus.connected) {
       emitStatus(ConnectionStatus.error);
     }
+    // Clean up the dead session: complete pending completers, cancel the
+    // subscription and close/null the sockets so a later connect() doesn't leak
+    // them. Fire-and-forget mirrors dispose(); _teardown() is idempotent.
+    _teardown();
   }
 
   Future<void> _teardown() async {
