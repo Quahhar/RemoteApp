@@ -36,6 +36,8 @@ class FakeController extends RemoteController {
   final List<Device> emit;
   final RemoteException? connectError;
   final List<RemoteKey> sentKeys = [];
+  int connectCount = 0;
+  int disconnectCount = 0;
 
   @override
   ProtocolType get protocol => ProtocolType.roku;
@@ -52,6 +54,7 @@ class FakeController extends RemoteController {
 
   @override
   Future<void> connect(Device device) async {
+    connectCount++;
     emitStatus(ConnectionStatus.connecting);
     if (connectError != null) {
       emitStatus(ConnectionStatus.error);
@@ -61,7 +64,10 @@ class FakeController extends RemoteController {
   }
 
   @override
-  Future<void> disconnect() async => emitStatus(ConnectionStatus.disconnected);
+  Future<void> disconnect() async {
+    disconnectCount++;
+    emitStatus(ConnectionStatus.disconnected);
+  }
 
   @override
   Future<void> sendKey(RemoteKey key) async => sentKeys.add(key);
@@ -187,5 +193,121 @@ void main() {
       throwsA(isA<NotReachableException>()),
     );
     expect(fake.status, ConnectionStatus.error);
+  });
+
+  test('re-selecting the active device disconnects before reconnecting (no leak)',
+      () async {
+    final prefs = await freshPrefs();
+    final fake = FakeController();
+    final registry = ControllerRegistry({ProtocolType.roku: () => fake});
+    final c = makeContainer(prefs, registry: registry);
+
+    final notifier = c.read(activeDeviceProvider.notifier);
+    await notifier.select(_devA); // first connect, nothing to disconnect
+    await notifier.select(_devA); // re-select the same device
+
+    expect(fake.connectCount, 2);
+    expect(fake.disconnectCount, 1, reason: 'old session torn down before reconnect');
+    expect(fake.status, ConnectionStatus.connected);
+  });
+
+  test('a failed select() does not persist a phantom device', () async {
+    final prefs = await freshPrefs();
+    final fake = FakeController(connectError: const NotReachableException());
+    final registry = ControllerRegistry({ProtocolType.roku: () => fake});
+    final c = makeContainer(prefs, registry: registry);
+
+    await expectLater(
+      c.read(activeDeviceProvider.notifier).select(_devA),
+      throwsA(isA<NotReachableException>()),
+    );
+    expect(c.read(savedDevicesProvider), isEmpty);
+    expect(prefs.getString('active_device_id'), isNull);
+  });
+
+  group('connectViaDlnaFallback()', () {
+    const vidaaDev = Device(
+      id: 'vidaa-10.0.0.9',
+      name: 'Living Room TV',
+      host: '10.0.0.9',
+      protocol: ProtocolType.vidaa,
+    );
+
+    test('brings up DLNA on the same host and makes it active', () async {
+      final prefs = await freshPrefs();
+      final dlna = FakeController();
+      final registry = ControllerRegistry({ProtocolType.dlna: () => dlna});
+      final c = makeContainer(prefs, registry: registry);
+
+      final result = await c
+          .read(activeDeviceProvider.notifier)
+          .connectViaDlnaFallback(vidaaDev);
+
+      expect(result, isNotNull);
+      expect(result!.protocol, ProtocolType.dlna);
+      expect(result.host, '10.0.0.9');
+      expect(c.read(activeDeviceProvider)?.id, 'dlna-10.0.0.9');
+      expect(c.read(activeDeviceProvider)?.protocol, ProtocolType.dlna);
+      expect(dlna.status, ConnectionStatus.connected);
+      expect(prefs.getString('active_device_id'), 'dlna-10.0.0.9');
+      expect(c.read(savedDevicesProvider).map((d) => d.id),
+          contains('dlna-10.0.0.9'));
+    });
+
+    test('replaces the dead native entry instead of duplicating it', () async {
+      final prefs = await freshPrefs();
+      final dlna = FakeController();
+      final registry = ControllerRegistry({ProtocolType.dlna: () => dlna});
+      final c = makeContainer(prefs, registry: registry);
+
+      // The TV was previously saved under its (now failing) native protocol.
+      await c.read(savedDevicesProvider.notifier).upsert(vidaaDev);
+
+      await c
+          .read(activeDeviceProvider.notifier)
+          .connectViaDlnaFallback(vidaaDev);
+
+      final ids = c.read(savedDevicesProvider).map((d) => d.id).toList();
+      expect(ids, contains('dlna-10.0.0.9'));
+      expect(ids, isNot(contains('vidaa-10.0.0.9')),
+          reason: 'one card per TV — the dead native entry is removed');
+    });
+
+    test('returns null and changes nothing when no renderer is present',
+        () async {
+      final prefs = await freshPrefs();
+      final dlna = FakeController(connectError: const NotReachableException());
+      final registry = ControllerRegistry({ProtocolType.dlna: () => dlna});
+      final c = makeContainer(prefs, registry: registry);
+
+      final result = await c
+          .read(activeDeviceProvider.notifier)
+          .connectViaDlnaFallback(vidaaDev);
+
+      expect(result, isNull);
+      expect(c.read(activeDeviceProvider), isNull);
+      expect(prefs.getString('active_device_id'), isNull);
+    });
+
+    test('does not retry a DLNA origin (no recursion)', () async {
+      final prefs = await freshPrefs();
+      final dlna = FakeController(connectError: const NotReachableException());
+      final registry = ControllerRegistry({ProtocolType.dlna: () => dlna});
+      final c = makeContainer(prefs, registry: registry);
+
+      const dlnaOrigin = Device(
+        id: 'dlna-10.0.0.9',
+        name: 'X',
+        host: '10.0.0.9',
+        protocol: ProtocolType.dlna,
+      );
+
+      final result = await c
+          .read(activeDeviceProvider.notifier)
+          .connectViaDlnaFallback(dlnaOrigin);
+
+      expect(result, isNull);
+      expect(dlna.status, ConnectionStatus.disconnected); // never attempted
+    });
   });
 }

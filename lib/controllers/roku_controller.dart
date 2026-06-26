@@ -25,15 +25,23 @@ class RokuController extends RemoteController {
   RokuController({
     http.Client? client,
     Duration requestTimeout = const Duration(seconds: 4),
+    Duration heartbeatInterval = const Duration(seconds: 10),
   })  : _client = client ?? http.Client(),
         _ownsClient = client == null,
-        _requestTimeout = requestTimeout;
+        _requestTimeout = requestTimeout,
+        _heartbeatInterval = heartbeatInterval;
 
   final http.Client _client;
   final bool _ownsClient;
   final Duration _requestTimeout;
+  final Duration _heartbeatInterval;
 
   Device? _device;
+
+  /// Stateless ECP has no persistent socket, so a periodic reachability probe is
+  /// what flips the status to `error` when the TV goes offline (otherwise it
+  /// would read "Connected" until the next failed keypress).
+  Timer? _heartbeat;
 
   static const String _ssdpAddress = '239.255.255.250';
   static const int _ssdpPort = 1900;
@@ -201,27 +209,49 @@ class RokuController extends RemoteController {
   Future<void> connect(Device device) async {
     emitStatus(ConnectionStatus.connecting);
     _device = device;
-    try {
-      final res = await _client
-          .get(_uri(device, '/query/device-info'))
-          .timeout(_requestTimeout);
-      if (res.statusCode == 200) {
-        emitStatus(ConnectionStatus.connected);
-        return;
-      }
-    } on TimeoutException {
-      // fall through
-    } on SocketException {
-      // fall through
-    } on http.ClientException {
-      // fall through
+    if (await _reachable(device)) {
+      emitStatus(ConnectionStatus.connected);
+      _startHeartbeat();
+      return;
     }
     emitStatus(ConnectionStatus.error);
     throw const NotReachableException();
   }
 
+  /// Whether the Roku still answers `/query/device-info`. Used both by [connect]
+  /// and the heartbeat.
+  Future<bool> _reachable(Device device) async {
+    try {
+      final res = await _client
+          .get(_uri(device, '/query/device-info'))
+          .timeout(_requestTimeout);
+      return res.statusCode == 200;
+    } on TimeoutException {
+      return false;
+    } on SocketException {
+      return false;
+    } on http.ClientException {
+      return false;
+    }
+  }
+
+  void _startHeartbeat() {
+    _heartbeat?.cancel();
+    _heartbeat = Timer.periodic(_heartbeatInterval, (_) async {
+      final device = _device;
+      if (device == null) return;
+      if (!await _reachable(device)) {
+        _heartbeat?.cancel();
+        _heartbeat = null;
+        emitStatus(ConnectionStatus.error);
+      }
+    });
+  }
+
   @override
   Future<void> disconnect() async {
+    _heartbeat?.cancel();
+    _heartbeat = null;
     _device = null;
     emitStatus(ConnectionStatus.disconnected);
   }
@@ -298,6 +328,7 @@ class RokuController extends RemoteController {
 
   @override
   void dispose() {
+    _heartbeat?.cancel();
     if (_ownsClient) _client.close();
     super.dispose();
   }

@@ -107,6 +107,25 @@ void main() {
       );
       controller.dispose();
     });
+
+    test('heartbeat flips status to error when the TV goes offline', () async {
+      var online = true;
+      final client = MockClient((req) async {
+        if (!online) throw const SocketException('offline');
+        return http.Response(_deviceInfoXml, 200);
+      });
+      final controller = RokuController(
+        client: client,
+        heartbeatInterval: const Duration(milliseconds: 20),
+      );
+      await controller.connect(_device);
+      expect(controller.status, ConnectionStatus.connected);
+
+      online = false; // TV drops off the network
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(controller.status, ConnectionStatus.error);
+      controller.dispose();
+    });
   });
 
   group('sendKey()', () {
