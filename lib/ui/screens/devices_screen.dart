@@ -2,15 +2,21 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../controllers/remote_controller.dart';
+import '../../models/connection_status.dart';
 import '../../models/device.dart';
 import '../../models/protocol_type.dart';
 import '../../state/active_device_provider.dart';
 import '../../state/app_providers.dart';
+import '../../state/connection_provider.dart';
 import '../../state/discovery_provider.dart';
 import '../../state/saved_devices_provider.dart';
+import '../../theme/app_colors.dart';
+import 'settings_screen.dart';
 
-/// Device manager: saved devices, a live cross-protocol scan, and manual add by
-/// IP + brand. Selecting a device makes it active and connects.
+/// Devices tab — matches the mockup: a "Devices" header with a Settings gear and
+/// a Scan button, a radar card while scanning, a "Found on network" list, a
+/// "Recently connected" list, and an inline "Add manually" card. Selecting a
+/// device makes it active and connects (running code pairing first when needed).
 class DevicesScreen extends ConsumerWidget {
   const DevicesScreen({super.key});
 
@@ -19,71 +25,79 @@ class DevicesScreen extends ConsumerWidget {
     final saved = ref.watch(savedDevicesProvider);
     final discovery = ref.watch(discoveryProvider);
     final active = ref.watch(activeDeviceProvider);
+    final status = ref.watch(connectionStatusProvider).value ??
+        ConnectionStatus.disconnected;
 
     // Discovered devices not already in the saved list. Match on id *or*
     // (protocol, host) so a TV saved via SSDP (rich id) isn't shown again when
     // the LAN port scan re-finds it with a host-based id.
     final savedIds = saved.map((d) => d.id).toSet();
-    final savedKeys =
-        saved.map((d) => '${d.protocol.name}@${d.host}').toSet();
+    final savedKeys = saved.map((d) => '${d.protocol.name}@${d.host}').toSet();
     final newlyFound = discovery.devices
         .where((d) =>
             !savedIds.contains(d.id) &&
             !savedKeys.contains('${d.protocol.name}@${d.host}'))
         .toList();
 
-    return Scaffold(
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          children: [
-            _ScanBar(
-              scanning: discovery.scanning,
-              onScan: () => ref.read(discoveryProvider.notifier).scan(),
-              onStop: () => ref.read(discoveryProvider.notifier).stop(),
-            ),
-            if (saved.isNotEmpty) ...[
-              const _SectionHeader('Saved'),
-              for (final device in saved)
-                _DeviceTile(
-                  device: device,
-                  isActive: device.id == active?.id,
-                  onTap: () => _select(context, ref, device),
-                  onRemove: () =>
-                      ref.read(savedDevicesProvider.notifier).remove(device.id),
-                ),
-            ],
-            _SectionHeader(
-              newlyFound.isEmpty && !discovery.scanning ? 'Discovered' : 'Found',
-            ),
-            if (newlyFound.isEmpty)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                child: Text(
-                  discovery.scanning
-                      ? 'Scanning your network…'
-                      : 'No new devices. Tap Scan, or add one manually.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              )
-            else
-              for (final device in newlyFound)
-                _DeviceTile(
-                  device: device,
-                  isActive: false,
-                  onTap: () => _select(context, ref, device),
-                ),
-          ],
+    bool isConnected(Device d) =>
+        active?.id == d.id && status == ConnectionStatus.connected;
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(22, 6, 22, 28),
+      children: [
+        _Header(
+          scanning: discovery.scanning,
+          onScan: () => discovery.scanning
+              ? ref.read(discoveryProvider.notifier).stop()
+              : ref.read(discoveryProvider.notifier).scan(),
+          onSettings: () => Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const SettingsScreen()),
+          ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showManualAdd(context, ref),
-        icon: const Icon(Icons.add),
-        label: const Text('Add manually'),
-      ),
+        const SizedBox(height: 18),
+        if (discovery.scanning) ...[
+          const _ScanningCard(),
+          const SizedBox(height: 18),
+        ],
+        if (newlyFound.isNotEmpty) ...[
+          const _SectionLabel('Found on network'),
+          for (final device in newlyFound)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _DeviceCard(
+                device: device,
+                found: true,
+                connected: isConnected(device),
+                onConnect: () => _select(context, ref, device),
+              ),
+            ),
+          const SizedBox(height: 8),
+        ],
+        const _SectionLabel('Recently connected'),
+        if (saved.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              'No devices yet. Scan, or add one manually below.',
+              style: TextStyle(fontSize: 14, color: AppColors.textMuted),
+            ),
+          )
+        else
+          for (final device in saved)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: _DeviceCard(
+                device: device,
+                found: false,
+                connected: isConnected(device),
+                onConnect: () => _select(context, ref, device),
+                onRemove: () =>
+                    ref.read(savedDevicesProvider.notifier).remove(device.id),
+              ),
+            ),
+        const SizedBox(height: 8),
+        _ManualAddCard(onSubmit: (device) => _select(context, ref, device)),
+      ],
     );
   }
 
@@ -91,7 +105,7 @@ class DevicesScreen extends ConsumerWidget {
       BuildContext context, WidgetRef ref, Device device) async {
     final controller =
         ref.read(controllerRegistryProvider).controllerFor(device.protocol);
-    // Code-based pairing (Android TV) must happen before we connect.
+    // Code-based pairing (Android TV / VIDAA) must happen before we connect.
     if (controller.capabilities.requiresPairingCode && !device.isPaired) {
       await _pairThenConnect(context, ref, controller, device);
       return;
@@ -108,14 +122,37 @@ class DevicesScreen extends ConsumerWidget {
         SnackBar(content: Text('Connected to ${device.name}')),
       );
     } on RemoteException catch (e) {
-      messenger.removeCurrentSnackBar();
-      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      await _connectOrFallback(messenger, ref, device, e.message);
     } catch (_) {
-      messenger.removeCurrentSnackBar();
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Could not connect to the device')),
-      );
+      await _connectOrFallback(
+          messenger, ref, device, 'Could not connect to the device');
     }
+  }
+
+  /// Last resort when a device's own protocol won't connect: try the same TV
+  /// over DLNA (its built-in remote may be firmware-locked while its media
+  /// renderer is open). Shows the cast result on success, else the original
+  /// error. No-op fallback for devices that are already DLNA.
+  Future<void> _connectOrFallback(
+    ScaffoldMessengerState messenger,
+    WidgetRef ref,
+    Device device,
+    String originalError,
+  ) async {
+    final fallback = await ref
+        .read(activeDeviceProvider.notifier)
+        .connectViaDlnaFallback(device);
+    messenger.removeCurrentSnackBar();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          fallback != null
+              ? 'Connected to ${device.name} over Cast — its built-in remote '
+                  'wasn’t available, so volume, mute and play/pause will work.'
+              : originalError,
+        ),
+      ),
+    );
   }
 
   /// Run the on-TV code pairing, then connect. Generic over any controller that
@@ -133,14 +170,10 @@ class DevicesScreen extends ConsumerWidget {
     try {
       await controller.beginPairing(device);
     } on RemoteException catch (e) {
-      messenger
-        ..removeCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(e.message)));
+      await _connectOrFallback(messenger, ref, device, e.message);
       return;
     } catch (_) {
-      messenger
-        ..removeCurrentSnackBar()
-        ..showSnackBar(const SnackBar(content: Text('Could not reach the TV')));
+      await _connectOrFallback(messenger, ref, device, 'Could not reach the TV');
       return;
     }
     messenger.removeCurrentSnackBar();
@@ -172,16 +205,6 @@ class DevicesScreen extends ConsumerWidget {
     if (!context.mounted) return;
     await _select(context, ref, device.copyWith(authToken: token));
   }
-
-  Future<void> _showManualAdd(BuildContext context, WidgetRef ref) async {
-    final device = await showDialog<Device>(
-      context: context,
-      builder: (_) => const _ManualAddDialog(),
-    );
-    if (device != null && context.mounted) {
-      await _select(context, ref, device);
-    }
-  }
 }
 
 IconData protocolIcon(ProtocolType protocol) => switch (protocol) {
@@ -190,204 +213,557 @@ IconData protocolIcon(ProtocolType protocol) => switch (protocol) {
       ProtocolType.tizen => Icons.tv,
       ProtocolType.androidtv => Icons.android,
       ProtocolType.vidaa => Icons.connected_tv,
+      ProtocolType.dlna => Icons.cast_connected,
     };
 
-class _ScanBar extends StatelessWidget {
-  const _ScanBar({
+// ---------------------------------------------------------------------------
+// Header: title + Settings gear + Scan
+// ---------------------------------------------------------------------------
+
+class _Header extends StatelessWidget {
+  const _Header({
     required this.scanning,
     required this.onScan,
-    required this.onStop,
+    required this.onSettings,
   });
 
   final bool scanning;
   final VoidCallback onScan;
-  final VoidCallback onStop;
+  final VoidCallback onSettings;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
+      padding: const EdgeInsets.only(top: 8, left: 4, right: 4),
       child: Row(
         children: [
-          Expanded(
-            child: scanning
-                ? const LinearProgressIndicator()
-                : Text(
-                    'Scan your Wi-Fi for TVs',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
+          const Expanded(
+            child: Text(
+              'Devices',
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.w700,
+                letterSpacing: -0.5,
+                color: AppColors.textPrimary,
+              ),
+            ),
           ),
-          const SizedBox(width: 12),
-          scanning
-              ? TextButton.icon(
-                  onPressed: onStop,
-                  icon: const Icon(Icons.stop),
-                  label: const Text('Stop'),
-                )
-              : FilledButton.tonalIcon(
-                  onPressed: onScan,
-                  icon: const Icon(Icons.search),
-                  label: const Text('Scan'),
-                ),
+          IconButton(
+            onPressed: onSettings,
+            visualDensity: VisualDensity.compact,
+            icon: const Icon(Icons.settings_outlined,
+                size: 22, color: AppColors.textMuted),
+          ),
+          const SizedBox(width: 4),
+          _ScanButton(scanning: scanning, onTap: onScan),
         ],
       ),
     );
   }
 }
 
-class _SectionHeader extends StatelessWidget {
-  const _SectionHeader(this.title);
-  final String title;
+class _ScanButton extends StatelessWidget {
+  const _ScanButton({required this.scanning, required this.onTap});
+  final bool scanning;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.accent,
+      borderRadius: BorderRadius.circular(19),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(19),
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 18),
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (scanning) ...[
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation(Colors.white),
+                  ),
+                ),
+                const SizedBox(width: 7),
+              ],
+              Text(
+                scanning ? 'Scanning' : 'Scan',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scanning radar card
+// ---------------------------------------------------------------------------
+
+class _ScanningCard extends StatelessWidget {
+  const _ScanningCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(30),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 14,
+            spreadRadius: -6,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: const Column(
+        children: [
+          _Radar(),
+          SizedBox(height: 14),
+          Text(
+            'Scanning your network…',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: AppColors.textMuted,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Radar extends StatefulWidget {
+  const _Radar();
+
+  @override
+  State<_Radar> createState() => _RadarState();
+}
+
+class _RadarState extends State<_Radar> with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1800),
+  )..repeat();
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 90,
+      height: 90,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _c,
+              builder: (_, _) => CustomPaint(painter: _RadarPainter(_c.value)),
+            ),
+          ),
+          Container(
+            width: 46,
+            height: 46,
+            decoration: const BoxDecoration(
+              color: AppColors.accent,
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.wifi, size: 24, color: Colors.white),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RadarPainter extends CustomPainter {
+  _RadarPainter(this.t);
+  final double t;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    for (final offset in [0.0, 0.5]) {
+      final p = (t + offset) % 1.0;
+      final radius = 15 + p * 33; // expands outward
+      final paint = Paint()
+        ..color = AppColors.accent.withValues(alpha: 0.18 * (1 - p));
+      canvas.drawCircle(center, radius, paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RadarPainter old) => old.t != t;
+}
+
+// ---------------------------------------------------------------------------
+// Section label + device cards
+// ---------------------------------------------------------------------------
+
+class _SectionLabel extends StatelessWidget {
+  const _SectionLabel(this.text);
+  final String text;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(top: 16, bottom: 4),
+      padding: const EdgeInsets.only(left: 4, bottom: 10),
       child: Text(
-        title.toUpperCase(),
-        style: TextStyle(
-          fontSize: 12,
-          letterSpacing: 1.1,
-          fontWeight: FontWeight.w700,
-          color: Theme.of(context).colorScheme.primary,
+        text.toUpperCase(),
+        style: const TextStyle(
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.3,
+          color: AppColors.textMuted,
         ),
       ),
     );
   }
 }
 
-class _DeviceTile extends StatelessWidget {
-  const _DeviceTile({
+class _DeviceCard extends StatelessWidget {
+  const _DeviceCard({
     required this.device,
-    required this.isActive,
-    required this.onTap,
+    required this.found,
+    required this.connected,
+    required this.onConnect,
     this.onRemove,
   });
 
   final Device device;
-  final bool isActive;
-  final VoidCallback onTap;
+  final bool found;
+  final bool connected;
+  final VoidCallback onConnect;
   final VoidCallback? onRemove;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      color: isActive ? scheme.primaryContainer : null,
-      child: ListTile(
-        leading: Icon(protocolIcon(device.protocol)),
-        title: Text(device.name),
-        subtitle: Text('${device.protocol.label} · ${device.host}'),
-        trailing: isActive
-            ? Icon(Icons.check_circle, color: scheme.primary)
-            : (onRemove == null
-                ? const Icon(Icons.add_circle_outline)
-                : IconButton(
-                    tooltip: 'Remove',
-                    icon: const Icon(Icons.delete_outline),
-                    onPressed: onRemove,
-                  )),
-        onTap: onTap,
+    final iconBg = found ? AppColors.accentSoft : AppColors.fieldBg;
+    final iconFg = found ? AppColors.accent : AppColors.textMuted;
+
+    return Material(
+      color: AppColors.card,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: connected ? null : onConnect,
+        onLongPress: onRemove == null ? null : () => _confirmRemove(context),
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(14, 13, 14, 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x12000000),
+                blurRadius: 12,
+                spreadRadius: -6,
+                offset: Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: iconBg,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(protocolIcon(device.protocol),
+                    size: 22, color: iconFg),
+              ),
+              const SizedBox(width: 13),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      device.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      '${device.protocol.label} • ${device.host}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              if (connected)
+                const _ConnectedChip()
+              else
+                _ConnectButton(found: found, onTap: onConnect),
+            ],
+          ),
+        ),
       ),
     );
   }
-}
 
-class _ManualAddDialog extends StatefulWidget {
-  const _ManualAddDialog();
-
-  @override
-  State<_ManualAddDialog> createState() => _ManualAddDialogState();
-}
-
-class _ManualAddDialogState extends State<_ManualAddDialog> {
-  final _formKey = GlobalKey<FormState>();
-  final _hostController = TextEditingController();
-  final _nameController = TextEditingController();
-  ProtocolType _protocol = ProtocolType.roku;
-
-  @override
-  void dispose() {
-    _hostController.dispose();
-    _nameController.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    if (!_formKey.currentState!.validate()) return;
-    final host = _hostController.text.trim();
-    final name = _nameController.text.trim();
-    final device = Device(
-      id: '${_protocol.name}-$host',
-      name: name.isEmpty ? '${_protocol.label} ($host)' : name,
-      host: host,
-      protocol: _protocol,
+  Future<void> _confirmRemove(BuildContext context) async {
+    final remove = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text('Forget ${device.name}?'),
+        content: const Text('This removes it from your saved devices.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Forget'),
+          ),
+        ],
+      ),
     );
-    Navigator.of(context).pop(device);
+    if (remove == true) onRemove?.call();
   }
+}
+
+class _ConnectedChip extends StatelessWidget {
+  const _ConnectedChip();
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Add device'),
-      content: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            DropdownButtonFormField<ProtocolType>(
-              initialValue: _protocol,
-              decoration: const InputDecoration(labelText: 'Brand'),
-              items: [
-                for (final p in ProtocolType.values)
-                  DropdownMenuItem(value: p, child: Text(p.label)),
-              ],
-              onChanged: (p) => setState(() => _protocol = p ?? _protocol),
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _hostController,
-              decoration: const InputDecoration(
-                labelText: 'IP address',
-                hintText: '192.168.1.50',
-              ),
-              keyboardType: TextInputType.url,
-              autovalidateMode: AutovalidateMode.onUserInteraction,
-              validator: (v) {
-                final value = (v ?? '').trim();
-                if (value.isEmpty) return 'Required';
-                if (!RegExp(r'^[\w.\-:]+$').hasMatch(value)) {
-                  return 'Enter a valid IP or hostname';
-                }
-                return null;
-              },
-            ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _nameController,
-              decoration: const InputDecoration(
-                labelText: 'Name (optional)',
-                hintText: 'Living Room TV',
-              ),
-            ),
-          ],
+    return const Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(Icons.check, size: 16, color: AppColors.green),
+        SizedBox(width: 5),
+        Text(
+          'Connected',
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: AppColors.green,
+          ),
         ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(onPressed: _submit, child: const Text('Add')),
       ],
     );
   }
 }
 
-/// Collects the 6-character code the TV shows during pairing.
+class _ConnectButton extends StatelessWidget {
+  const _ConnectButton({required this.found, required this.onTap});
+  final bool found;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = found ? AppColors.accentSoft : AppColors.fieldBg;
+    final fg = found ? AppColors.accent : AppColors.textPrimary;
+    return Material(
+      color: bg,
+      borderRadius: BorderRadius.circular(17),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(17),
+        child: Container(
+          height: 34,
+          padding: const EdgeInsets.symmetric(horizontal: 15),
+          alignment: Alignment.center,
+          child: Text(
+            'Connect',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: fg,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Inline manual add
+// ---------------------------------------------------------------------------
+
+class _ManualAddCard extends StatefulWidget {
+  const _ManualAddCard({required this.onSubmit});
+  final void Function(Device) onSubmit;
+
+  @override
+  State<_ManualAddCard> createState() => _ManualAddCardState();
+}
+
+class _ManualAddCardState extends State<_ManualAddCard> {
+  final _ip = TextEditingController();
+  ProtocolType _protocol = ProtocolType.roku;
+
+  @override
+  void dispose() {
+    _ip.dispose();
+    super.dispose();
+  }
+
+  void _add() {
+    final host = _ip.text.trim();
+    if (host.isEmpty) return;
+    final device = Device(
+      id: '${_protocol.name}-$host',
+      name: '${_protocol.label} ($host)',
+      host: host,
+      protocol: _protocol,
+    );
+    _ip.clear();
+    FocusScope.of(context).unfocus();
+    widget.onSubmit(device);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(15),
+      decoration: BoxDecoration(
+        color: AppColors.card,
+        borderRadius: BorderRadius.circular(22),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 14,
+            spreadRadius: -6,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(4, 0, 4, 11),
+            child: Text(
+              'ADD MANUALLY',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.3,
+                color: AppColors.textMuted,
+              ),
+            ),
+          ),
+          // Brand picker.
+          Container(
+            height: 46,
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            decoration: BoxDecoration(
+              color: AppColors.fieldBg,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<ProtocolType>(
+                value: _protocol,
+                isExpanded: true,
+                icon: const Icon(Icons.expand_more, color: AppColors.textMuted),
+                style: const TextStyle(
+                    fontSize: 15, color: AppColors.textPrimary),
+                items: [
+                  for (final p in ProtocolType.values)
+                    DropdownMenuItem(value: p, child: Text(p.label)),
+                ],
+                onChanged: (p) => setState(() => _protocol = p ?? _protocol),
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          // IP + Add.
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 46,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: AppColors.fieldBg,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  alignment: Alignment.center,
+                  child: TextField(
+                    controller: _ip,
+                    keyboardType: TextInputType.url,
+                    autocorrect: false,
+                    textInputAction: TextInputAction.done,
+                    onSubmitted: (_) => _add(),
+                    style: const TextStyle(
+                        fontSize: 15, color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      isCollapsed: true,
+                      border: InputBorder.none,
+                      hintText: 'IP address e.g. 192.168.1.10',
+                      hintStyle: TextStyle(color: AppColors.textMuted),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Material(
+                color: AppColors.accent,
+                borderRadius: BorderRadius.circular(14),
+                child: InkWell(
+                  onTap: _add,
+                  borderRadius: BorderRadius.circular(14),
+                  child: Container(
+                    height: 46,
+                    padding: const EdgeInsets.symmetric(horizontal: 20),
+                    alignment: Alignment.center,
+                    child: const Text(
+                      'Add',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Collects the code the TV shows during pairing (Android TV / VIDAA).
 class _PairingCodeDialog extends StatefulWidget {
   const _PairingCodeDialog({required this.deviceName});
   final String deviceName;

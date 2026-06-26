@@ -43,15 +43,15 @@ void main() {
     );
     await tester.pump();
 
-    // The shared header from the mockups.
-    expect(find.text('Remote Control'), findsOneWidget);
+    // The Remote tab is showing — its D-pad centre OK button is present.
+    expect(find.text('OK'), findsOneWidget);
 
-    // Frosted bottom-nav destinations are present (Remote/Touchpad/Devices).
+    // Bottom-nav destinations are present (Remote/Trackpad/Devices).
     expect(find.text('Remote'), findsOneWidget);
-    expect(find.text('Touchpad'), findsOneWidget);
+    expect(find.text('Trackpad'), findsOneWidget);
     expect(find.text('Devices'), findsOneWidget);
 
-    // With nothing saved, the device card shows the empty state.
+    // With nothing saved, the connected bar shows the empty state.
     expect(find.textContaining('No TV selected'), findsOneWidget);
   });
 
@@ -81,7 +81,7 @@ void main() {
         ProviderScope.containerOf(tester.element(find.byType(HomeShell)));
     expect(container.read(selectedTabProvider), HomeTab.devices);
     expect(find.textContaining('No device connected'), findsOneWidget);
-    // The Devices tab is now showing (its manual-add FAB is on screen).
-    expect(find.text('Add manually'), findsOneWidget);
+    // The Devices tab is now showing (its inline manual-add card is on screen).
+    expect(find.text('ADD MANUALLY'), findsOneWidget);
   });
 }

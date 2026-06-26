@@ -1,44 +1,43 @@
 import 'package:flutter/material.dart';
 
-/// Design tokens taken directly from the Remote Control mockup.
+/// Design tokens taken directly from the "WiFi Remote" mockup: a flat, light,
+/// iOS-style palette on an `#f4f4f6` screen with a single `#2f6bf6` blue accent.
 class AppColors {
   AppColors._();
 
+  // Surfaces.
+  static const Color bg = Color(0xFFF4F4F6); // screen background
+  static const Color card = Color(0xFFFFFFFF); // white cards / controls
+  static const Color fieldBg = Color(0xFFF4F4F6); // text-field fill
+
+  // Accent.
+  static const Color accent = Color(0xFF2F6BF6);
+  static const Color accentSoft = Color(0xFFEEF3FF); // pressed / active wash
+  static const Color accentSoftPressed = Color(0xFFDDE7FF);
+
   // Text.
-  static const Color textPrimary = Color(0xFF26243A);
-  static const Color textSecondary = Color(0xFF5A5870);
-  static const Color textMuted = Color(0xFF6B6982);
-  static const Color label = Color(0xFF4A4860);
-  static const Color icon = Color(0xFF3A3850);
+  static const Color textPrimary = Color(0xFF1C1C1E);
+  static const Color textMuted = Color(0xFF8A8A8E);
+  static const Color textFaint = Color(0xFF9A9AA0);
+  static const Color hintFaint = Color(0xFFC2C2C8);
 
-  // Accents.
-  static const Color accent = Color(0xFF3A5BD9); // active tab / primary
-  static const Color powerRed = Color(0xFFE8493A);
-  static const Color powerBg = Color(0xFFFDEEE9);
-  static const Color statusGreen = Color(0xFF2EC06A);
-  static const Color statusGrey = Color(0xFFB8B6C4);
+  // Status / actions.
+  static const Color green = Color(0xFF34C759);
+  static const Color powerRed = Color(0xFFFF3B30);
+  static const Color powerSoftBg = Color(0xFFFFECEC);
 
-  // Frosted surfaces (white at various opacities).
-  static const Color cardFill = Color(0x6BFFFFFF); // 0.42
-  static const Color cardBorder = Color(0x8CFFFFFF); // 0.55
-  static const Color softFill = Color(0x38FFFFFF); // 0.22
-  static const Color softBorder = Color(0x52FFFFFF); // 0.32
-  static const Color navBar = Color(0xC7FFFFFF); // 0.78
-  static const Color okFill = Color(0xFFFFFFFF);
+  // Lines & borders.
+  static const Color divider = Color(0xFFF0F0F2); // thin internal lines
+  static const Color border = Color(0xFFEDEDF1); // OK button / outlines
+  static const Color navBorder = Color(0xFFE9E9EE); // top of bottom nav
 
-  /// Halo behind the connected status dot.
-  static const Color statusHaloGreen = Color(0x2E2EC06A); // rgba(46,192,106,.18)
+  // D-pad triangles.
+  static const Color arrowGrey = Color(0xFFB4B4BB);
 
-  /// Full-screen background gradient (mockup: linear-gradient(170deg, …)).
-  static const LinearGradient backgroundGradient = LinearGradient(
-    begin: Alignment(-0.17, -1.0),
-    end: Alignment(0.17, 1.0),
-    colors: [
-      Color(0xFFD2C2EF),
-      Color(0xFFBCC0EF),
-      Color(0xFF9FB1EA),
-      Color(0xFF8FA8E8),
-    ],
-    stops: [0.0, 0.38, 0.70, 1.0],
-  );
+  // Bottom-nav inactive icon/label.
+  static const Color navInactive = Color(0xFF9A9AA0);
+  static const Color navBar = Color(0xF2FFFFFF); // translucent white
+
+  // Soft dot grid on the trackpad surface.
+  static const Color dotGrid = Color(0xFFECECF0);
 }

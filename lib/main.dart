@@ -4,14 +4,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'state/app_providers.dart';
+import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
 import 'ui/home_shell.dart';
-import 'ui/widgets/lava_lamp_background.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Draw behind the system bars and make them transparent so the app's
-  // background + frosted nav bar blend with the phone's status/navigation bars.
+  // Draw behind the system bars and make them transparent so the flat app
+  // background blends with the phone's status / navigation bars.
   await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   SystemChrome.setSystemUIOverlayStyle(
     const SystemUiOverlayStyle(
@@ -41,9 +41,10 @@ class RemoteApp extends StatelessWidget {
       title: 'Remote',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light,
-      // The animated (or static) background sits behind every route.
-      builder: (context, child) =>
-          AppBackground(child: child ?? const SizedBox.shrink()),
+      builder: (context, child) => ColoredBox(
+        color: AppColors.bg,
+        child: child ?? const SizedBox.shrink(),
+      ),
       home: const HomeShell(),
     );
   }

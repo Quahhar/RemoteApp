@@ -62,24 +62,27 @@ void main() {
         (tester) async {
       await _pump(tester, const Capabilities(supportsTextInput: true));
       await tester.pump();
-      expect(find.text('Type to send to TV'), findsOneWidget);
+      expect(find.text('Search or enter text…'), findsOneWidget);
       expect(find.byType(TextField), findsOneWidget);
     });
   });
 
-  group('Touchpad surface gating', () {
-    testWidgets('pointer surface when the controller supports a pointer',
+  group('Touchpad surface', () {
+    // The mockup's pad looks identical regardless of capability (the pointer vs
+    // swipe behaviour is internal); it always renders the drag surface + hint.
+    testWidgets('renders the pad when the controller supports a pointer',
         (tester) async {
       await _pump(tester, const Capabilities(supportsPointer: true));
       await tester.pump();
-      expect(find.text('TOUCHPAD AREA'), findsOneWidget);
+      expect(find.text('Move your finger here'), findsOneWidget);
+      expect(find.text('Drag to move • tap to click'), findsOneWidget);
     });
 
-    testWidgets('swipe fallback when the controller has no pointer',
+    testWidgets('renders the pad when the controller has no pointer',
         (tester) async {
       await _pump(tester, const Capabilities(supportsPointer: false));
       await tester.pump();
-      expect(find.text('SWIPE TO NAVIGATE'), findsOneWidget);
+      expect(find.text('Move your finger here'), findsOneWidget);
     });
   });
 }
