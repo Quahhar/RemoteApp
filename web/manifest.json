@@ -1,6 +1,6 @@
 {
-    "name": "remote",
-    "short_name": "remote",
+    "name": "Omnix",
+    "short_name": "Omnix",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

@@ -37,7 +37,6 @@ class ProtoWriter {
   }
 
   void string(int field, String value) {
-    if (value.isEmpty) return;
     bytes(field, utf8.encode(value));
   }
 
@@ -60,10 +59,19 @@ Map<int, Object> parseProto(Uint8List data) {
     var result = 0;
     var shift = 0;
     while (true) {
+      // Bounds-check each byte so a truncated varint inside an otherwise
+      // complete frame throws FormatException (handled by the socket callbacks'
+      // zone guard) instead of an uncaught RangeError.
+      if (pos >= data.length) {
+        throw const FormatException('Truncated protobuf varint');
+      }
       final b = data[pos++];
       result |= (b & 0x7f) << shift;
       if ((b & 0x80) == 0) break;
       shift += 7;
+      if (shift > 63) {
+        throw const FormatException('Protobuf varint too long');
+      }
     }
     return result;
   }
@@ -75,14 +83,32 @@ Map<int, Object> parseProto(Uint8List data) {
     switch (wire) {
       case 0: // varint
         out[field] = readVarint();
+        break;
       case 2: // length-delimited
+        if (pos >= data.length) {
+          throw const FormatException('Truncated protobuf length varint');
+        }
         final len = readVarint();
+        if (pos + len > data.length) {
+          throw const FormatException(
+            'Truncated protobuf length-delimited field',
+          );
+        }
         out[field] = Uint8List.sublistView(data, pos, pos + len);
         pos += len;
+        break;
       case 5: // 32-bit
+        if (pos + 4 > data.length) {
+          throw const FormatException('Truncated protobuf 32-bit field');
+        }
         pos += 4;
+        break;
       case 1: // 64-bit
+        if (pos + 8 > data.length) {
+          throw const FormatException('Truncated protobuf 64-bit field');
+        }
         pos += 8;
+        break;
       default:
         throw FormatException('Unsupported protobuf wire type $wire');
     }

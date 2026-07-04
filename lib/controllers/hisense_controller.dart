@@ -90,6 +90,28 @@ class HisenseController extends RemoteController {
     RemoteKey.channelDown: 'KEY_CHANNELDOWN',
     RemoteKey.play: 'KEY_PLAY',
     RemoteKey.pause: 'KEY_PAUSE',
+    // Extended keys. VIDAA's media-rewind is `KEY_BACK` (navigation back is
+    // `KEY_RETURNS`, above). Unmapped More-sheet commands surface as
+    // "not available".
+    RemoteKey.digit0: 'KEY_0',
+    RemoteKey.digit1: 'KEY_1',
+    RemoteKey.digit2: 'KEY_2',
+    RemoteKey.digit3: 'KEY_3',
+    RemoteKey.digit4: 'KEY_4',
+    RemoteKey.digit5: 'KEY_5',
+    RemoteKey.digit6: 'KEY_6',
+    RemoteKey.digit7: 'KEY_7',
+    RemoteKey.digit8: 'KEY_8',
+    RemoteKey.digit9: 'KEY_9',
+    RemoteKey.rewind: 'KEY_BACK',
+    RemoteKey.fastForward: 'KEY_FORWARDS',
+    RemoteKey.stop: 'KEY_STOP',
+    RemoteKey.source: 'KEY_INPUTS',
+    RemoteKey.subtitles: 'KEY_SUBTITLE',
+    RemoteKey.colorRed: 'KEY_RED',
+    RemoteKey.colorGreen: 'KEY_GREEN',
+    RemoteKey.colorYellow: 'KEY_YELLOW',
+    RemoteKey.colorBlue: 'KEY_BLUE',
   };
 
   @override
@@ -125,6 +147,19 @@ class HisenseController extends RemoteController {
   @visibleForTesting
   static String authCodeTopic(String deviceTopic) =>
       '/remoteapp/tv/ui_service/$deviceTopic/actions/authenticationcode';
+
+  /// Topics the TV publishes its pairing *reply* on (the `mobile`/`data`
+  /// namespace we subscribe to — distinct from the `tv`/`actions` topics we
+  /// publish commands to). The PIN acknowledgement (`{"result":1}`) arrives on
+  /// one of these, so the auth handshake must listen here, not on the send
+  /// topic ([authCodeTopic]).
+  @visibleForTesting
+  static String authReplyTopic(String deviceTopic) =>
+      '/remoteapp/mobile/$deviceTopic/ui_service/data/authentication';
+
+  @visibleForTesting
+  static String authCodeReplyTopic(String deviceTopic) =>
+      '/remoteapp/mobile/$deviceTopic/ui_service/data/authenticationcode';
 
   @visibleForTesting
   static String stateTopic(String deviceTopic) =>
@@ -371,7 +406,7 @@ class HisenseController extends RemoteController {
       }
       if (timedOut) {
         throw NotReachableException(
-          'The TV did not answer on port 36669 — make sure it is on and on the '
+          'The TV did not answer on port 36669. Make sure it is on and on the '
           'same Wi-Fi network.$detail',
         );
       }
@@ -394,7 +429,18 @@ class HisenseController extends RemoteController {
     ]) {
       connected.subscribe(t, MqttQos.atMostOnce);
     }
-    _updates = connected.updates?.listen(_onMessages);
+    final updates = connected.updates;
+    if (updates == null) {
+      await _closeSession();
+      throw const NotReachableException('TV did not open a message channel');
+    }
+    try {
+      _updates = updates.listen(_onMessages);
+    } catch (_) {
+      // If the updates stream is already closed, tear down and fail.
+      await _closeSession();
+      throw const NotReachableException('TV disconnected during handshake');
+    }
   }
 
   MqttServerClient _buildClient(
@@ -469,28 +515,44 @@ class HisenseController extends RemoteController {
     for (final event in events) {
       final message = event.payload;
       if (message is! MqttPublishMessage) continue;
+      final topic = event.topic;
       final text = MqttPublishPayload.bytesToStringAsString(
         message.payload.message,
       );
-      if (kDebugMode) debugPrint('[Hisense] <= ${event.topic}: $text');
-      final result = resultFromJson(text);
-      if (result != null && _authResult != null && !_authResult!.isCompleted) {
-        _authResult!.complete(result == 1);
+      if (kDebugMode) debugPrint('[Hisense] <= $topic: $text');
+      // Only complete the auth result when the message arrives on one of the
+      // TV's pairing-reply topics ([authReplyTopic]/[authCodeReplyTopic]) —
+      // ignoring `result` fields in unrelated messages (e.g. state broadcasts)
+      // that would prematurely resolve or reject the pairing handshake. Matching
+      // the send topic ([authCodeTopic]) never fired: the TV replies on the
+      // `mobile`/`data` namespace, not the `tv`/`actions` one we publish to.
+      if (_authResult != null &&
+          !_authResult!.isCompleted &&
+          _deviceTopic != null &&
+          (topic == authReplyTopic(_deviceTopic!) ||
+              topic == authCodeReplyTopic(_deviceTopic!))) {
+        final result = resultFromJson(text);
+        if (result != null) {
+          _authResult!.complete(result == 1);
+        }
       }
     }
   }
 
   void _publish(String topic, String payload) {
     final client = _client;
-    if (client == null) return;
+    if (client == null) {
+      throw const RemoteException('Hisense TV is not connected');
+    }
     final builder = MqttClientPayloadBuilder()..addString(payload);
-    client.publishMessage(topic, MqttQos.atMostOnce, builder.payload!);
+    client.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
   }
 
   // --- Pairing ---------------------------------------------------------------
 
   @override
   Future<void> beginPairing(Device device) async {
+    if (_client != null) await _closeSession();
     emitStatus(ConnectionStatus.connecting);
     try {
       await _openSession(device);
@@ -500,7 +562,10 @@ class HisenseController extends RemoteController {
     }
 
     final topic = _deviceTopic;
-    if (topic == null) return;
+    if (topic == null) {
+      emitStatus(ConnectionStatus.error);
+      throw const RemoteException('Could not establish device identity');
+    }
 
     // gettvstate triggers the 4-digit PIN on ALL known VIDAA firmware.
     // Unlike vidaa_app_connect, it has no version field so the TV can
@@ -534,7 +599,7 @@ class HisenseController extends RemoteController {
       await _closeSession();
       emitStatus(ConnectionStatus.error);
       throw const PairingRejectedException(
-        "That code didn't match — try again",
+        "That code didn't match. Try again.",
       );
     }
     // Try to capture the access token from the TV's response — this
@@ -550,6 +615,7 @@ class HisenseController extends RemoteController {
 
   @override
   Future<void> connect(Device device) async {
+    if (_client != null) await _closeSession();
     if (device.authToken != pairedMarker) {
       emitStatus(ConnectionStatus.error);
       throw const PairingRequiredException();
@@ -572,7 +638,8 @@ class HisenseController extends RemoteController {
     }
     final name = keyNames[key];
     if (name == null) {
-      throw RemoteException('Unsupported key: ${key.name}');
+      // Key-agnostic so repeats de-dupe into one SnackBar.
+      throw const RemoteException("That button isn't available on this TV.");
     }
     _publish(keyTopic(_deviceTopic!), name);
   }
@@ -594,7 +661,7 @@ class HisenseController extends RemoteController {
 
   @override
   void dispose() {
-    _closeSession();
+    unawaited(_closeSession());
     super.dispose();
   }
 
@@ -605,7 +672,7 @@ class HisenseController extends RemoteController {
       return 'The TV refused the secure connection (TLS handshake failed).';
     }
     if (e is SocketException) {
-      return 'Could not reach the TV — connection refused or no route to it.';
+      return 'Could not reach the TV. Connection refused or no route to it.';
     }
     return 'Could not open a remote session with the TV.';
   }
@@ -620,7 +687,7 @@ class HisenseController extends RemoteController {
       MqttConnectReturnCode.badUsernameOrPassword =>
         'The TV rejected the remote sign-in',
       MqttConnectReturnCode.identifierRejected =>
-        'The TV rejected this client — try again',
+        'The TV rejected this client. Try again.',
       MqttConnectReturnCode.brokerUnavailable =>
         'The TV’s remote service is unavailable right now',
       _ => 'Could not open a remote session with the TV',

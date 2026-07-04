@@ -76,6 +76,43 @@ class AndroidTvController extends RemoteController {
     RemoteKey.channelDown: 167,
     RemoteKey.play: 126,
     RemoteKey.pause: 127,
+    // Extended keys — Android `KeyEvent` keycodes. The richest set of the six
+    // protocols; unmapped More-sheet commands still surface as "not available".
+    RemoteKey.digit0: 7,
+    RemoteKey.digit1: 8,
+    RemoteKey.digit2: 9,
+    RemoteKey.digit3: 10,
+    RemoteKey.digit4: 11,
+    RemoteKey.digit5: 12,
+    RemoteKey.digit6: 13,
+    RemoteKey.digit7: 14,
+    RemoteKey.digit8: 15,
+    RemoteKey.digit9: 16,
+    RemoteKey.previous: 88, // MEDIA_PREVIOUS
+    RemoteKey.next: 87, // MEDIA_NEXT
+    RemoteKey.rewind: 89, // MEDIA_REWIND
+    RemoteKey.fastForward: 90, // MEDIA_FAST_FORWARD
+    RemoteKey.stop: 86, // MEDIA_STOP
+    RemoteKey.record: 130, // MEDIA_RECORD
+    RemoteKey.liveTv: 170, // TV
+    RemoteKey.guide: 172, // GUIDE
+    RemoteKey.source: 178, // TV_INPUT
+    RemoteKey.subtitles: 175, // CAPTIONS
+    RemoteKey.sleep: 223, // SLEEP
+    RemoteKey.audioTrack: 222, // MEDIA_AUDIO_TRACK
+    RemoteKey.colorRed: 183, // PROG_RED
+    RemoteKey.colorGreen: 184, // PROG_GREEN
+    RemoteKey.colorYellow: 185, // PROG_YELLOW
+    RemoteKey.colorBlue: 186, // PROG_BLUE
+    RemoteKey.inputHdmi1: 243, // TV_INPUT_HDMI_1
+    RemoteKey.inputHdmi2: 244, // TV_INPUT_HDMI_2
+    RemoteKey.inputHdmi3: 245, // TV_INPUT_HDMI_3
+    RemoteKey.inputAv: 247, // TV_INPUT_COMPOSITE_1
+    RemoteKey.inputTv: 170, // TV
+    RemoteKey.settings: 176, // SETTINGS
+    RemoteKey.search: 84, // SEARCH
+    RemoteKey.voiceAssist: 231, // VOICE_ASSIST
+    RemoteKey.notifications: 83, // NOTIFICATION
   };
 
   @override
@@ -83,12 +120,12 @@ class AndroidTvController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        supportsPointer: false, // v2 is key-based; no pointer
-        supportsTextInput: false, // IME text is a later addition
-        channelButtons: true,
-        numberPad: true,
-        requiresPairingCode: true,
-      );
+    supportsPointer: false, // v2 is key-based; no pointer
+    supportsTextInput: true,
+    channelButtons: true,
+    numberPad: true,
+    requiresPairingCode: true,
+  );
 
   @override
   String? get authToken => _credential;
@@ -120,8 +157,6 @@ class AndroidTvController extends RemoteController {
         await client.start();
         started = true;
       } catch (_) {
-        // start() can fail partway (e.g. desktop without multicast support);
-        // stop() defensively in case a socket was opened before it threw.
         try {
           client.stop();
         } catch (_) {}
@@ -145,8 +180,6 @@ class AndroidTvController extends RemoteController {
               final host = ip.address.address;
               if (!seen.add(host)) continue;
               if (out.isClosed) return;
-              // Port is left default: the SRV port (6466) is the *remote* port,
-              // but beginPairing needs 6467 — see _pairingPort/_remotePort.
               out.add(
                 Device(
                   id: 'androidtv-$host',
@@ -174,21 +207,21 @@ class AndroidTvController extends RemoteController {
   /// Builds an [MDnsClient] that binds without `reusePort` (which Windows — used
   /// for desktop testing — doesn't support); the default would throw there.
   static MDnsClient _mdnsClient() => MDnsClient(
-        rawDatagramSocketFactory: (
+    rawDatagramSocketFactory:
+        (
           dynamic host,
           int port, {
           bool reuseAddress = true,
           bool reusePort = true,
           int ttl = 1,
-        }) =>
-            RawDatagramSocket.bind(
-              host,
-              port,
-              reuseAddress: reuseAddress,
-              reusePort: false,
-              ttl: ttl,
-            ),
-      );
+        }) => RawDatagramSocket.bind(
+          host,
+          port,
+          reuseAddress: reuseAddress,
+          reusePort: false,
+          ttl: ttl,
+        ),
+  );
 
   /// Extracts the human-readable instance (friendly) name from an mDNS PTR
   /// domain like `Living Room TV._androidtvremote2._tcp.local`, DNS-SD-unescaping
@@ -213,10 +246,10 @@ class AndroidTvController extends RemoteController {
         final dec = RegExp(r'^[0-9]{3}').firstMatch(rest);
         if (dec != null) {
           sb.writeCharCode(int.parse(dec.group(0)!));
-          i += 4; // backslash + three digits
+          i += 4;
           continue;
         }
-        sb.write(label[i + 1]); // escaped literal: \. \\ \  etc.
+        sb.write(label[i + 1]);
         i += 2;
         continue;
       }
@@ -239,6 +272,9 @@ class AndroidTvController extends RemoteController {
 
   @override
   Future<void> beginPairing(Device device) async {
+    // Re-entry guard: close any pairing socket still open from a prior attempt
+    // so a second beginPairing doesn't leak it (mirrors connect()/_closeRemote).
+    if (_pairing != null) await _closePairing();
     emitStatus(ConnectionStatus.connecting);
     final id = await identity.ensure();
     _clientCertDer = AtvCrypto.pemToDer(id.certPem);
@@ -251,7 +287,14 @@ class AndroidTvController extends RemoteController {
       ).timeout(connectTimeout);
     } catch (_) {
       emitStatus(ConnectionStatus.error);
-      throw const NotReachableException();
+      // Pairing is where first contact happens, so be specific: the usual
+      // culprits are standby (the pairing service sleeps with the screen), a
+      // different network, or Android TV's cooldown after failed attempts.
+      throw const NotReachableException(
+        "Couldn't reach the TV to start pairing. Make sure the TV is fully on "
+        '(not standby) and on the same Wi-Fi. After several failed attempts, '
+        'Android TV pauses pairing for a minute — wait, then try again.',
+      );
     }
     _serverCertDer = _pairing!.peerCertificate?.der;
     if (_serverCertDer == null) {
@@ -313,7 +356,9 @@ class AndroidTvController extends RemoteController {
         code: code.trim(),
       );
     } on FormatException {
-      throw const PairingRejectedException('That code didn\'t match — try again');
+      throw const PairingRejectedException(
+        'That code didn\'t match. Try again.',
+      );
     }
     _secretAck = Completer<void>();
     _send(_pairing!, AtvMessages.pairingSecret(secret));
@@ -322,7 +367,10 @@ class AndroidTvController extends RemoteController {
     } catch (_) {
       await _closePairing();
       emitStatus(ConnectionStatus.error);
-      throw const PairingRejectedException();
+      throw const PairingRejectedException(
+        'The TV rejected the code. Start pairing again and retype the code '
+        'exactly as shown on the TV.',
+      );
     }
     _credential = pairedMarker;
     await _closePairing();
@@ -330,16 +378,17 @@ class AndroidTvController extends RemoteController {
   }
 
   void _failPairing(Object error) {
-    // Guard against completing an already-completed completer (e.g. _codeReady
-    // is completed-but-non-null once the code is shown) — an unguarded
-    // completeError would throw inside this socket callback.
+    // Only flip to error when a handshake was genuinely in flight. _failPairing
+    // is also reached via onDone after a *successful* pair (completePairing
+    // closes the socket); an unconditional emit would clobber that success.
+    final wasPending = (_codeReady != null && !_codeReady!.isCompleted) ||
+        (_secretAck != null && !_secretAck!.isCompleted);
     _failOnce(_codeReady);
     _failOnce(_secretAck);
     _codeReady = null;
     _secretAck = null;
-    // Close/null the dead pairing socket so beginPairing()/completePairing()
-    // don't reuse or leak it. Fire-and-forget; _closePairing() is idempotent.
     _closePairing();
+    if (wasPending) emitStatus(ConnectionStatus.error);
   }
 
   void _failOnce(Completer<void>? c) {
@@ -359,6 +408,7 @@ class AndroidTvController extends RemoteController {
 
   @override
   Future<void> connect(Device device) async {
+    if (_remote != null) await _closeRemote();
     if (device.authToken != pairedMarker) {
       emitStatus(ConnectionStatus.error);
       throw const PairingRequiredException();
@@ -366,7 +416,7 @@ class AndroidTvController extends RemoteController {
     final id = identity.load();
     if (id == null) {
       emitStatus(ConnectionStatus.error);
-      throw const PairingRequiredException('Pairing was lost — pair again');
+      throw const PairingRequiredException('Pairing was lost. Pair again.');
     }
     emitStatus(ConnectionStatus.connecting);
     try {
@@ -407,7 +457,7 @@ class AndroidTvController extends RemoteController {
           _send(_remote!, AtvMessages.remoteConfigure());
         case RemoteType.setActive:
           _send(_remote!, AtvMessages.remoteSetActive());
-          _completeOnce(_active); // ready once active
+          _completeOnce(_active);
         case RemoteType.start:
           _completeOnce(_active);
         case RemoteType.pingRequest:
@@ -426,9 +476,21 @@ class AndroidTvController extends RemoteController {
     }
     final code = keyCodes[key];
     if (code == null) {
-      throw RemoteException('Unsupported key: ${key.name}');
+      // Key-agnostic so repeats de-dupe into one SnackBar.
+      throw const RemoteException("That button isn't available on this TV.");
     }
     _send(socket, AtvMessages.remoteKeyInject(code));
+  }
+
+  @override
+  Future<void> sendText(String text) async {
+    // No-op on empty input so we never emit a zero-length text-inject frame.
+    if (text.isEmpty) return;
+    final socket = _remote;
+    if (socket == null) {
+      throw const RemoteException('Android TV is not connected');
+    }
+    _send(socket, AtvMessages.remoteTextInject(text));
   }
 
   void _failRemote() {
@@ -436,11 +498,12 @@ class AndroidTvController extends RemoteController {
       _active!.completeError(const ConnectionLostException());
     }
     _active = null;
-    if (status == ConnectionStatus.connected) {
+    // Always emit error when the socket drops — even during connecting, so the
+    // UI doesn't stay stuck on "connecting" forever.
+    if (status == ConnectionStatus.connecting ||
+        status == ConnectionStatus.connected) {
       emitStatus(ConnectionStatus.error);
     }
-    // Close/null the dead control socket so sendKey() doesn't write to it and a
-    // later connect() doesn't leak it. Fire-and-forget; _closeRemote() is idempotent.
     _closeRemote();
   }
 

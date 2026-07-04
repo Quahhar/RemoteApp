@@ -84,7 +84,11 @@ Future<({int epoch, String brand})> descriptor(String host) async {
 }
 
 void main(List<String> args) async {
-  final host = args.isNotEmpty ? args.first : '192.168.18.6';
+  if (args.isEmpty) {
+    print('Usage: dart run tool/vidaa_pair_secure.dart <tv-ip>');
+    exit(64); // EX_USAGE
+  }
+  final host = args.first;
   try {
     File(pinFile).deleteSync();
   } catch (_) {}

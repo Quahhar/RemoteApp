@@ -34,7 +34,7 @@ void main() {
       expect(kTvDiscoveryPorts[8060], ProtocolType.roku);
       expect(kTvDiscoveryPorts[3000], ProtocolType.webos);
       expect(kTvDiscoveryPorts[8002], ProtocolType.tizen);
-      expect(kTvDiscoveryPorts[6467], ProtocolType.androidtv);
+      expect(kTvDiscoveryPorts[6466], ProtocolType.androidtv);
       expect(kTvDiscoveryPorts[36669], ProtocolType.vidaa);
     });
 

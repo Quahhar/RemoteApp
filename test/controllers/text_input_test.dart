@@ -42,6 +42,29 @@ void main() {
         const TextRun('x'),
       ]);
     });
+
+    test('CRLF collapses to a single enter (not two)', () {
+      expect(tokenizeInput('a\r\nb'), [
+        const TextRun('a'),
+        const TextEdit(TextEditKey.enter),
+        const TextRun('b'),
+      ]);
+    });
+
+    test('lone CR is one enter; CR and LF separated by text are two', () {
+      expect(tokenizeInput('a\rb'), [
+        const TextRun('a'),
+        const TextEdit(TextEditKey.enter),
+        const TextRun('b'),
+      ]);
+      expect(tokenizeInput('a\rb\nc'), [
+        const TextRun('a'),
+        const TextEdit(TextEditKey.enter),
+        const TextRun('b'),
+        const TextEdit(TextEditKey.enter),
+        const TextRun('c'),
+      ]);
+    });
   });
 
   group('Roku text -> ECP keys', () {

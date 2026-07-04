@@ -77,7 +77,6 @@ const rcmCert =
     'C:/Users/x/Documents/program/Flutter/Remote/remote/assets/certs/vidaa_client_cert.pem';
 const rcmKey =
     'C:/Users/x/Documents/program/Flutter/Remote/remote/assets/certs/vidaa_client_key.pem';
-const realTvIp = '192.168.18.6';
 
 String _dump(List<int> d) {
   final hex = d.map((b) => b.toRadixString(16).padLeft(2, '0')).join(' ');
@@ -128,7 +127,7 @@ Future<void> serveHttp(int port, String ip) async {
   }
 }
 
-Future<void> serveTls(int port) async {
+Future<void> serveTls(int port, String realTvIp) async {
   final ctx = SecurityContext()
     ..useCertificateChain(srvCert)
     ..usePrivateKey(srvKey)
@@ -191,7 +190,13 @@ Future<void> serveTls(int port) async {
 }
 
 void main(List<String> args) async {
-  final ip = args.isNotEmpty ? args.first : '192.168.18.8';
+  if (args.length < 2) {
+    print('Usage: dart run tool/tv_impersonator.dart '
+        '<impersonate-ip> <real-tv-ip>');
+    exit(64); // EX_USAGE
+  }
+  final ip = args[0];
+  final realTvIp = args[1];
   print('Impersonating VIDAA TV as $ip — point the app at this IP.');
   serveSsdp(ip);
   listenUdp(36671, ip);
@@ -199,6 +204,6 @@ void main(List<String> args) async {
   await Future.wait([
     serveHttp(38400, ip),
     serveHttp(18400, ip),
-    serveTls(36669),
+    serveTls(36669, realTvIp),
   ]);
 }

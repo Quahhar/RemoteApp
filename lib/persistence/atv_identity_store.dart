@@ -1,3 +1,5 @@
+import 'dart:isolate';
+
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../controllers/androidtv/atv_crypto.dart';
@@ -20,12 +22,12 @@ class AtvIdentityStore {
   }
 
   /// Return the stored identity, generating and persisting one if absent.
-  /// Generation is CPU-heavy (RSA-2048) and runs synchronously — only happens
-  /// once, during the first pairing.
+  /// Generation is CPU-heavy (RSA-2048) so it runs on a background isolate
+  /// to avoid freezing the UI on the first Android TV pairing.
   Future<AtvIdentity> ensure() async {
     final existing = load();
     if (existing != null) return existing;
-    final identity = AtvCrypto.generateIdentity();
+    final identity = await Isolate.run(() => AtvCrypto.generateIdentity());
     await _prefs.setString(_certKey, identity.certPem);
     await _prefs.setString(_keyKey, identity.keyPem);
     return identity;

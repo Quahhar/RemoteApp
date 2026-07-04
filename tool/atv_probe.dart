@@ -19,7 +19,11 @@ const pinFile = r'C:\Users\x\AppData\Local\Temp\atv_pin.txt';
 String hex(List<int> b) => b.map((x) => x.toRadixString(16).padLeft(2, '0')).join(' ');
 
 void main(List<String> args) async {
-  final host = args.isNotEmpty ? args.first : '192.168.18.6';
+  if (args.isEmpty) {
+    print('Usage: dart run tool/atv_probe.dart <tv-ip>');
+    exit(64); // EX_USAGE
+  }
+  final host = args.first;
   try {
     File(pinFile).deleteSync();
   } catch (_) {}

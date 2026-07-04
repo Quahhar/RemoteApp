@@ -140,7 +140,7 @@ void main() {
       controller.dispose();
     });
 
-    test('heartbeat flips status to error when the renderer goes offline',
+    test('heartbeat tracks the renderer going offline and back (self-healing)',
         () async {
       var online = true;
       final controller = DlnaController(
@@ -157,6 +157,10 @@ void main() {
       online = false; // TV drops off the network
       await Future<void>.delayed(const Duration(milliseconds: 120));
       expect(controller.status, ConnectionStatus.error);
+
+      online = true; // TV returns — heartbeat must recover on its own
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(controller.status, ConnectionStatus.connected);
       controller.dispose();
     });
   });

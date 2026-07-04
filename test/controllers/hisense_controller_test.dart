@@ -33,6 +33,25 @@ void main() {
       );
     });
 
+    test('pairing reply topics are the mobile/data namespace, not the send '
+        'topic', () {
+      // The TV publishes its PIN acknowledgement on mobile/.../data, NOT on the
+      // tv/.../actions topic the app sends the code to. Listening on the send
+      // topic (authCodeTopic) never fired, so pairing always timed out.
+      expect(
+        HisenseController.authReplyTopic(deviceTopic),
+        '/remoteapp/mobile/AA:BB:CC:DD:EE:FF\$normal/ui_service/data/authentication',
+      );
+      expect(
+        HisenseController.authCodeReplyTopic(deviceTopic),
+        '/remoteapp/mobile/AA:BB:CC:DD:EE:FF\$normal/ui_service/data/authenticationcode',
+      );
+      expect(
+        HisenseController.authReplyTopic(deviceTopic),
+        isNot(HisenseController.authCodeTopic(deviceTopic)),
+      );
+    });
+
     test('mobile subscription is a wildcard under our device topic', () {
       expect(
         HisenseController.mobileSubscription(deviceTopic),

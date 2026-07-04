@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../ads/ad_service.dart';
 import '../state/active_device_provider.dart';
 import '../state/navigation_provider.dart';
+import '../state/preferences_provider.dart';
 import '../theme/app_colors.dart';
 import 'screens/devices_screen.dart';
 import 'screens/remote_screen.dart';
 import 'screens/touchpad_screen.dart';
+import 'snackbar.dart' show clearSnackTracker, showSnack;
+import 'widgets/gemini_ambient_background.dart';
 
 /// Top-level shell. Each tab owns its own top area (the mockup has no shared
 /// header); a flat, translucent bottom nav switches between Remote / Trackpad /
@@ -23,6 +27,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      // Initialise ads once at startup (best-effort; never blocks the app).
+      ref.read(adServiceProvider).init();
+
       final device = ref.read(activeDeviceProvider);
       if (device == null) return;
       final messenger = ScaffoldMessenger.of(context);
@@ -31,13 +38,10 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       } catch (_) {
         // Don't fail silently: tell the user why the saved TV isn't connected.
         if (!mounted) return;
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(
-              'Couldn’t reconnect to ${device.name} — it may be off or on '
-              'another network.',
-            ),
-          ),
+        showSnack(
+          messenger,
+          'Couldn’t reconnect to ${device.name}. It may be off or on '
+          'another network.',
         );
       }
     });
@@ -46,8 +50,15 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   @override
   Widget build(BuildContext context) {
     final tab = ref.watch(selectedTabProvider);
-    return Scaffold(
-      backgroundColor: AppColors.bg,
+    final animatedBackground = ref.watch(animatedBackgroundProvider);
+    // Palette getters aren't reactive on their own: watching the dark-mode
+    // preference is what repaints the shell (and everything it builds) when
+    // the palette flips.
+    ref.watch(effectiveDarkModeProvider);
+    final scaffold = Scaffold(
+      // Transparent lets the ambient aura show through; the flat paper colour is
+      // only used when the animated background is switched off.
+      backgroundColor: animatedBackground ? Colors.transparent : AppColors.bg,
       body: SafeArea(
         bottom: false,
         // Render only the active page. (An IndexedStack keeps all three mounted;
@@ -61,15 +72,27 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       ),
       bottomNavigationBar: _BottomNav(
         currentIndex: tab.index,
-        onSelect: (i) =>
-            ref.read(selectedTabProvider.notifier).select(HomeTab.values[i]),
+        onSelect: (i) {
+          // Drop any lingering SnackBar from the page we're leaving so its
+          // message can't float over the next tab, and clear the de-duplication
+          // tracker so the same message is allowed to appear on the next page.
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          clearSnackTracker();
+          ref.read(selectedTabProvider.notifier).select(HomeTab.values[i]);
+        },
         items: const [
           _NavItem(Icons.settings_remote, 'Remote'),
-          _NavItem(Icons.touch_app, 'Trackpad'),
+          _NavItem(Icons.gesture, 'Trackpad'),
           _NavItem(Icons.tv, 'Devices'),
         ],
       ),
     );
+
+    // The aura bleeds full-screen behind the (transparent) scaffold, including
+    // under the bottom nav. Off -> the app's original flat paper background.
+    return animatedBackground
+        ? GeminiAmbientBackground(child: scaffold)
+        : scaffold;
   }
 }
 
@@ -94,7 +117,7 @@ class _BottomNav extends StatelessWidget {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
     return Container(
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         color: AppColors.navBar,
         border: Border(top: BorderSide(color: AppColors.navBorder)),
       ),

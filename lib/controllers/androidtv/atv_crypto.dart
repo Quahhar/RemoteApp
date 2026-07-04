@@ -36,7 +36,7 @@ class AtvCrypto {
     final priv = pair.privateKey as RSAPrivateKey;
     final pub = pair.publicKey as RSAPublicKey;
     final csr = X509Utils.generateRsaCsrPem(
-      {'CN': 'atvremote', 'O': 'Remote'},
+      {'CN': 'atvremote', 'O': 'Omnix'},
       priv,
       pub,
     );
@@ -97,6 +97,10 @@ class AtvCrypto {
 
   static Uint8List hexDecode(String s) {
     final clean = s.trim();
+    if (clean.isEmpty) return Uint8List(0);
+    if (clean.length.isOdd) {
+      throw const FormatException('Pairing code must have even length');
+    }
     final out = Uint8List(clean.length ~/ 2);
     for (var i = 0; i < out.length; i++) {
       out[i] = int.parse(clean.substring(i * 2, i * 2 + 2), radix: 16);
@@ -114,13 +118,14 @@ class AtvCrypto {
   ) {
     final client = parseCertPublicKey(clientCertDer);
     final server = parseCertPublicKey(serverCertDer);
-    final input = (BytesBuilder()
-          ..add(bigIntToBytes(client.modulus))
-          ..add(bigIntToBytes(client.exponent))
-          ..add(bigIntToBytes(server.modulus))
-          ..add(bigIntToBytes(server.exponent))
-          ..add(codeTail))
-        .toBytes();
+    final input =
+        (BytesBuilder()
+              ..add(bigIntToBytes(client.modulus))
+              ..add(bigIntToBytes(client.exponent))
+              ..add(bigIntToBytes(server.modulus))
+              ..add(bigIntToBytes(server.exponent))
+              ..add(codeTail))
+            .toBytes();
     return SHA256Digest().process(input);
   }
 

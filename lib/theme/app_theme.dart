@@ -2,20 +2,25 @@ import 'package:flutter/material.dart';
 
 import 'app_colors.dart';
 
-/// Flat, light theme matching the "WiFi Remote" mockup: an `#f4f4f6` screen,
-/// white cards, a single blue accent and the platform's system font (SF on iOS,
-/// Roboto on Android — i.e. the mockup's `system-ui`).
+/// Flat theme matching the "WiFi Remote" mockup: white cards, a single amber
+/// accent and the platform's system font (SF on iOS, Roboto on Android — i.e.
+/// the mockup's `system-ui`). Light and dark variants read the same
+/// [AppColors] tokens, so [AppColors.setDark] must be called *before* the
+/// matching getter (see `RemoteApp`).
 class AppTheme {
   AppTheme._();
 
-  static ThemeData get light {
+  static ThemeData get light => _build(Brightness.light);
+  static ThemeData get dark => _build(Brightness.dark);
+
+  static ThemeData _build(Brightness brightness) {
     final base = ThemeData(
       useMaterial3: true,
-      brightness: Brightness.light,
+      brightness: brightness,
       scaffoldBackgroundColor: AppColors.bg,
       colorScheme: ColorScheme.fromSeed(
         seedColor: AppColors.accent,
-        brightness: Brightness.light,
+        brightness: brightness,
       ).copyWith(
         primary: AppColors.accent,
         surface: AppColors.bg,
@@ -29,7 +34,7 @@ class AppTheme {
         bodyColor: AppColors.textPrimary,
         displayColor: AppColors.textPrimary,
       ),
-      appBarTheme: const AppBarTheme(
+      appBarTheme: AppBarTheme(
         backgroundColor: AppColors.bg,
         elevation: 0,
         scrolledUnderElevation: 0,

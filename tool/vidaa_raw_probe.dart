@@ -180,8 +180,13 @@ Future<int> attempt(String host, VidaaCredentials creds,
 }
 
 void main(List<String> args) async {
-  // args: [host] [timestampOverride] [brandOverride]
-  final host = args.isNotEmpty ? args.first : '192.168.18.6';
+  // args: <host> [timestampOverride] [brandOverride] [uuid]
+  if (args.isEmpty) {
+    print('Usage: dart run tool/vidaa_raw_probe.dart <tv-ip> '
+        '[timestampOverride] [brandOverride] [uuid]');
+    exit(64); // EX_USAGE
+  }
+  final host = args.first;
   final tsOverride = args.length > 1 ? int.tryParse(args[1]) : null;
   final brandOverride = args.length > 2 ? args[2] : null;
   if (args.length > 3 && args[3].isNotEmpty) uuid = args[3];

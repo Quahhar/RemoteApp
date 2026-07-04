@@ -1,5 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:remote/ads/ad_service.dart';
+import 'package:remote/purchases/purchase_controller.dart';
 import 'package:remote/controllers/controller_registry.dart';
 import 'package:remote/controllers/remote_controller.dart';
 import 'package:remote/main.dart';
@@ -30,6 +34,15 @@ class _SilentController extends RemoteController {
   Future<void> sendKey(RemoteKey key) async {}
 }
 
+/// No-op ads so widget tests never spin up the real AdMob SDK / its timers.
+class _NoAds extends AdService {
+  _NoAds(super.prefs);
+  @override
+  Future<void> init() async {}
+  @override
+  void maybeShowAfterConnect() {}
+}
+
 void main() {
   testWidgets('boots to the Remote tab with all destinations', (tester) async {
     SharedPreferences.setMockInitialValues({});
@@ -37,7 +50,11 @@ void main() {
 
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
+        overrides: [
+          sharedPreferencesProvider.overrideWithValue(prefs),
+          adServiceProvider.overrideWithValue(_NoAds(prefs)),
+          isProProvider.overrideWithValue(false),
+        ],
         child: const RemoteApp(),
       ),
     );
@@ -46,8 +63,9 @@ void main() {
     // The Remote tab is showing — its D-pad centre OK button is present.
     expect(find.text('OK'), findsOneWidget);
 
-    // Bottom-nav destinations are present (Remote/Trackpad/Devices).
-    expect(find.text('Remote'), findsOneWidget);
+    // Bottom-nav destinations are present (Remote/Trackpad/Devices). "Remote"
+    // appears twice now — the screen's header title and the nav label.
+    expect(find.text('Remote'), findsWidgets);
     expect(find.text('Trackpad'), findsOneWidget);
     expect(find.text('Devices'), findsOneWidget);
 
@@ -66,6 +84,8 @@ void main() {
         overrides: [
           sharedPreferencesProvider.overrideWithValue(prefs),
           controllerRegistryProvider.overrideWithValue(registry),
+          adServiceProvider.overrideWithValue(_NoAds(prefs)),
+          isProProvider.overrideWithValue(false),
         ],
         child: const RemoteApp(),
       ),

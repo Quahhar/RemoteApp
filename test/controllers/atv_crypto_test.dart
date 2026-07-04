@@ -62,6 +62,19 @@ void main() {
       throwsA(isA<FormatException>()),
     );
   });
+
+  test('computeSecret rejects odd-length / non-hex codes (no RangeError)', () {
+    final client = _makeCert();
+    final server = _makeCert();
+    Object? run(String code) => AtvCrypto.computeSecret(
+          clientCertDer: client.der,
+          serverCertDer: server.der,
+          code: code,
+        );
+    expect(() => run('abc'), throwsA(isA<FormatException>())); // odd length
+    expect(() => run('zz'), throwsA(isA<FormatException>())); // non-hex
+    expect(() => run(''), throwsA(isA<FormatException>())); // empty
+  });
 }
 
 String _hex(List<int> bytes) =>

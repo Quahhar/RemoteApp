@@ -10,7 +10,7 @@ import 'dart:math';
 
 import 'package:remote/controllers/vidaa_credentials.dart';
 
-const host = '192.168.18.6';
+late String host; // set from argv in main()
 const port = 36669;
 const certPath = 'assets/certs/vidaa_client_cert.pem';
 const keyPath = 'assets/certs/vidaa_client_key.pem';
@@ -223,7 +223,12 @@ Future<void> test(String operation) async {
   print('  done.');
 }
 
-void main() async {
+void main(List<String> args) async {
+  if (args.isEmpty) {
+    print('Usage: dart run tool/test_tv.dart <tv-ip>');
+    exit(64); // EX_USAGE
+  }
+  host = args.first;
   print('Testing TV at $host:$port\n');
   await test('vidaacommon');
   await test('secure');

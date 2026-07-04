@@ -65,7 +65,11 @@ List<int> buildPublish(String topic, String payload) {
 const pingreq = [0xC0, 0x00];
 
 void main(List<String> args) async {
-  final host = args.isNotEmpty ? args.first : '192.168.18.6';
+  if (args.isEmpty) {
+    print('Usage: dart run tool/vidaa_pair.dart <tv-ip>');
+    exit(64); // EX_USAGE
+  }
+  final host = args.first;
   try {
     File(pinFile).deleteSync();
   } catch (_) {}

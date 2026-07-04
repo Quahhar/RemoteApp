@@ -96,7 +96,11 @@ Future<void> tryPair(MqttServerClient c) async {
 }
 
 Future<void> main(List<String> args) async {
-  host = args.isNotEmpty ? args.first : '192.168.18.6';
+  if (args.isEmpty) {
+    print('Usage: dart run tool/vidaa_probe.dart <tv-ip>');
+    exit(64); // EX_USAGE
+  }
+  host = args.first;
   print('Probing $host:$port');
 
   final a = await attempt(

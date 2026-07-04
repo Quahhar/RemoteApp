@@ -7,8 +7,11 @@ import 'package:remote/models/connection_status.dart';
 import 'package:remote/models/device.dart';
 import 'package:remote/models/protocol_type.dart';
 import 'package:remote/models/remote_key.dart';
+import 'package:remote/purchases/purchase_controller.dart';
 import 'package:remote/state/active_device_provider.dart';
+import 'package:remote/state/app_providers.dart';
 import 'package:remote/ui/screens/touchpad_screen.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class FakeController extends RemoteController {
   FakeController(this._capabilities);
@@ -35,11 +38,15 @@ class FakeController extends RemoteController {
   Future<void> sendKey(RemoteKey key) async {}
 }
 
-Future<void> _pump(WidgetTester tester, Capabilities caps) {
-  return tester.pumpWidget(
+Future<void> _pump(WidgetTester tester, Capabilities caps) async {
+  SharedPreferences.setMockInitialValues({});
+  final prefs = await SharedPreferences.getInstance();
+  await tester.pumpWidget(
     ProviderScope(
       overrides: [
+        sharedPreferencesProvider.overrideWithValue(prefs),
         activeControllerProvider.overrideWithValue(FakeController(caps)),
+        isProProvider.overrideWithValue(false),
       ],
       child: const MaterialApp(home: Scaffold(body: TouchpadScreen())),
     ),
@@ -62,7 +69,7 @@ void main() {
         (tester) async {
       await _pump(tester, const Capabilities(supportsTextInput: true));
       await tester.pump();
-      expect(find.text('Search or enter text…'), findsOneWidget);
+      expect(find.text('Type to send to TV'), findsOneWidget);
       expect(find.byType(TextField), findsOneWidget);
     });
   });
@@ -74,15 +81,14 @@ void main() {
         (tester) async {
       await _pump(tester, const Capabilities(supportsPointer: true));
       await tester.pump();
-      expect(find.text('Move your finger here'), findsOneWidget);
-      expect(find.text('Drag to move • tap to click'), findsOneWidget);
+      expect(find.text('TOUCHPAD AREA'), findsOneWidget);
     });
 
     testWidgets('renders the pad when the controller has no pointer',
         (tester) async {
       await _pump(tester, const Capabilities(supportsPointer: false));
       await tester.pump();
-      expect(find.text('Move your finger here'), findsOneWidget);
+      expect(find.text('TOUCHPAD AREA'), findsOneWidget);
     });
   });
 }

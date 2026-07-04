@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../controllers/lan_scan.dart';
+import '../controllers/multicast_lock.dart';
 import '../models/device.dart';
 import 'app_providers.dart';
 
@@ -30,6 +31,7 @@ final discoveryProvider =
 
 class DiscoveryNotifier extends Notifier<DiscoveryState> {
   final List<StreamSubscription<Device>> _subs = [];
+  Timer? _watchdog;
 
   @override
   DiscoveryState build() {
@@ -48,6 +50,11 @@ class DiscoveryNotifier extends Notifier<DiscoveryState> {
     final seen = <String>{};
     state = const DiscoveryState(scanning: true, devices: []);
 
+    // Android drops multicast (mDNS) unless this lock is held — without it,
+    // Android TV discovery finds nothing on real phones. Released whenever the
+    // scan ends ([_cancelAll]/finish). Fire-and-forget: no-op off Android.
+    unawaited(MulticastLock.acquire());
+
     final registry = ref.read(controllerRegistryProvider);
     final sources = <Stream<Device>>[
       for (final protocol in registry.protocols)
@@ -56,9 +63,16 @@ class DiscoveryNotifier extends Notifier<DiscoveryState> {
     ];
 
     var remaining = sources.length;
+    void finish() {
+      _watchdog?.cancel();
+      _watchdog = null;
+      unawaited(MulticastLock.release());
+      if (state.scanning) state = state.copyWith(scanning: false);
+    }
+
     void onSourceDone() {
       remaining--;
-      if (remaining == 0) state = state.copyWith(scanning: false);
+      if (remaining == 0) finish();
     }
 
     for (final source in sources) {
@@ -74,6 +88,14 @@ class DiscoveryNotifier extends Notifier<DiscoveryState> {
       );
       _subs.add(sub);
     }
+
+    // Safety net: if a source hangs or errors without ever closing, the spinner
+    // would spin forever — force the scan to end past the slowest source (the
+    // LAN port scan runs ~8s: its own start delay plus the batched probes).
+    _watchdog = Timer(timeout + const Duration(seconds: 4), () {
+      _cancelAll();
+      finish();
+    });
   }
 
   /// Stop an in-progress scan immediately.
@@ -83,6 +105,9 @@ class DiscoveryNotifier extends Notifier<DiscoveryState> {
   }
 
   void _cancelAll() {
+    _watchdog?.cancel();
+    _watchdog = null;
+    unawaited(MulticastLock.release());
     for (final sub in _subs) {
       sub.cancel();
     }

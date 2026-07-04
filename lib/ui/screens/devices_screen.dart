@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../ads/ad_service.dart';
 import '../../controllers/remote_controller.dart';
 import '../../models/connection_status.dart';
 import '../../models/device.dart';
@@ -9,8 +10,11 @@ import '../../state/active_device_provider.dart';
 import '../../state/app_providers.dart';
 import '../../state/connection_provider.dart';
 import '../../state/discovery_provider.dart';
+import '../../state/preferences_provider.dart';
 import '../../state/saved_devices_provider.dart';
 import '../../theme/app_colors.dart';
+import '../snackbar.dart';
+import '../widgets/upgrade_button.dart';
 import 'settings_screen.dart';
 
 /// Devices tab — matches the mockup: a "Devices" header with a Settings gear and
@@ -22,21 +26,21 @@ class DevicesScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final saved = ref.watch(savedDevicesProvider);
     final discovery = ref.watch(discoveryProvider);
     final active = ref.watch(activeDeviceProvider);
     final status = ref.watch(connectionStatusProvider).value ??
         ConnectionStatus.disconnected;
+    // Repaint on palette flips (AppColors getters aren't reactive on their own).
+    ref.watch(effectiveDarkModeProvider);
 
-    // Discovered devices not already in the saved list. Match on id *or*
-    // (protocol, host) so a TV saved via SSDP (rich id) isn't shown again when
-    // the LAN port scan re-finds it with a host-based id.
-    final savedIds = saved.map((d) => d.id).toSet();
-    final savedKeys = saved.map((d) => '${d.protocol.name}@${d.host}').toSet();
+    // Discovered devices, excluding the one already shown in "Connected" so it
+    // isn't listed twice. Match on id *or* (protocol, host) so the same TV found
+    // by both SSDP (rich id) and the LAN port scan (host-based id) de-dupes.
     final newlyFound = discovery.devices
         .where((d) =>
-            !savedIds.contains(d.id) &&
-            !savedKeys.contains('${d.protocol.name}@${d.host}'))
+            active == null ||
+            (d.id != active.id &&
+                !(d.protocol == active.protocol && d.host == active.host)))
         .toList();
 
     bool isConnected(Device d) =>
@@ -55,12 +59,29 @@ class DevicesScreen extends ConsumerWidget {
           ),
         ),
         const SizedBox(height: 18),
+        if (active != null) ...[
+          // Helper widgets that read AppColors in build are instantiated
+          // non-const throughout so they repaint after a dark-mode toggle.
+          _SectionLabel('Connected'),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 10),
+            child: _DeviceCard(
+              device: active,
+              found: false,
+              connected: isConnected(active),
+              onConnect: () => _select(context, ref, active),
+              onRemove: () =>
+                  ref.read(savedDevicesProvider.notifier).remove(active.id),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
         if (discovery.scanning) ...[
-          const _ScanningCard(),
+          _ScanningCard(),
           const SizedBox(height: 18),
         ],
         if (newlyFound.isNotEmpty) ...[
-          const _SectionLabel('Found on network'),
+          _SectionLabel('Found on network'),
           for (final device in newlyFound)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
@@ -72,30 +93,15 @@ class DevicesScreen extends ConsumerWidget {
               ),
             ),
           const SizedBox(height: 8),
-        ],
-        const _SectionLabel('Recently connected'),
-        if (saved.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
+        ] else if (!discovery.scanning && active == null) ...[
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
             child: Text(
-              'No devices yet. Scan, or add one manually below.',
+              'No device connected. Scan, or add one manually below.',
               style: TextStyle(fontSize: 14, color: AppColors.textMuted),
             ),
-          )
-        else
-          for (final device in saved)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: _DeviceCard(
-                device: device,
-                found: false,
-                connected: isConnected(device),
-                onConnect: () => _select(context, ref, device),
-                onRemove: () =>
-                    ref.read(savedDevicesProvider.notifier).remove(device.id),
-              ),
-            ),
-        const SizedBox(height: 8),
+          ),
+        ],
         _ManualAddCard(onSubmit: (device) => _select(context, ref, device)),
       ],
     );
@@ -112,15 +118,14 @@ class DevicesScreen extends ConsumerWidget {
     }
 
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      SnackBar(content: Text('Connecting to ${device.name}…')),
-    );
+    showSnack(messenger, 'Connecting to ${device.name}…');
     try {
       await ref.read(activeDeviceProvider.notifier).select(device);
-      messenger.removeCurrentSnackBar();
-      messenger.showSnackBar(
-        SnackBar(content: Text('Connected to ${device.name}')),
-      );
+      showSnack(messenger, 'Connected to ${device.name}');
+      // The only ad trigger: a natural break, never during remote use. (If the
+      // UI is later redesigned, keep this one call to preserve ad behaviour.)
+      // Fire-and-forget: the service runs its own countdown and shows the ad.
+      ref.read(adServiceProvider).maybeShowAfterConnect();
     } on RemoteException catch (e) {
       await _connectOrFallback(messenger, ref, device, e.message);
     } catch (_) {
@@ -142,16 +147,14 @@ class DevicesScreen extends ConsumerWidget {
     final fallback = await ref
         .read(activeDeviceProvider.notifier)
         .connectViaDlnaFallback(device);
-    messenger.removeCurrentSnackBar();
-    messenger.showSnackBar(
-      SnackBar(
-        content: Text(
-          fallback != null
-              ? 'Connected to ${device.name} over Cast — its built-in remote '
-                  'wasn’t available, so volume, mute and play/pause will work.'
-              : originalError,
-        ),
-      ),
+    // Keep the original failure visible in the fallback message — silently
+    // switching to Cast made it look like the native protocol never existed.
+    showSnack(
+      messenger,
+      fallback != null
+          ? '$originalError\nConnected to ${device.name} over Cast instead — '
+              'volume, mute and play/pause will work.'
+          : originalError,
     );
   }
 
@@ -164,9 +167,7 @@ class DevicesScreen extends ConsumerWidget {
     Device device,
   ) async {
     final messenger = ScaffoldMessenger.of(context);
-    messenger.showSnackBar(
-      SnackBar(content: Text('Pairing with ${device.name}…')),
-    );
+    showSnack(messenger, 'Pairing with ${device.name}…');
     try {
       await controller.beginPairing(device);
     } on RemoteException catch (e) {
@@ -191,15 +192,13 @@ class DevicesScreen extends ConsumerWidget {
     try {
       await controller.completePairing(code);
     } on RemoteException catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text(e.message)));
+      showSnack(messenger, e.message);
       return;
     }
 
     final token = controller.authToken;
     if (token == null) {
-      messenger.showSnackBar(
-        const SnackBar(content: Text('Pairing failed — please try again')),
-      );
+      showSnack(messenger, 'Pairing failed. Please try again.');
       return;
     }
     if (!context.mounted) return;
@@ -237,21 +236,32 @@ class _Header extends StatelessWidget {
       padding: const EdgeInsets.only(top: 8, left: 4, right: 4),
       child: Row(
         children: [
-          const Expanded(
-            child: Text(
-              'Devices',
-              style: TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.5,
-                color: AppColors.textPrimary,
+          Expanded(
+            // On narrow phones (especially with a larger system font) the
+            // trailing Upgrade/gear/Scan buttons squeeze this slot below the
+            // title's natural width and the text wraps/clips. Scale it down
+            // to fit on one line instead.
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Devices',
+                maxLines: 1,
+                style: TextStyle(
+                  fontSize: 26,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: -0.5,
+                  color: AppColors.textPrimary,
+                ),
               ),
             ),
           ),
+          const UpgradeButton(),
+          const SizedBox(width: 4),
           IconButton(
             onPressed: onSettings,
             visualDensity: VisualDensity.compact,
-            icon: const Icon(Icons.settings_outlined,
+            icon: Icon(Icons.settings_outlined,
                 size: 22, color: AppColors.textMuted),
           ),
           const SizedBox(width: 4),
@@ -276,32 +286,19 @@ class _ScanButton extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(19),
         child: Container(
+          // Fixed width with a Scan<->Stop label (near-identical widths) so the
+          // button never reflows the row — which used to squeeze the "Devices"
+          // title. The radar card below conveys that a scan is in progress.
+          width: 84,
           height: 38,
-          padding: const EdgeInsets.symmetric(horizontal: 18),
           alignment: Alignment.center,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (scanning) ...[
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2,
-                    valueColor: AlwaysStoppedAnimation(Colors.white),
-                  ),
-                ),
-                const SizedBox(width: 7),
-              ],
-              Text(
-                scanning ? 'Scanning' : 'Scan',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white,
-                ),
-              ),
-            ],
+          child: Text(
+            scanning ? 'Stop' : 'Scan',
+            style: const TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              color: Colors.white,
+            ),
           ),
         ),
       ),
@@ -332,10 +329,10 @@ class _ScanningCard extends StatelessWidget {
           ),
         ],
       ),
-      child: const Column(
+      child: Column(
         children: [
-          _Radar(),
-          SizedBox(height: 14),
+          const _Radar(),
+          const SizedBox(height: 14),
           Text(
             'Scanning your network…',
             style: TextStyle(
@@ -386,7 +383,7 @@ class _RadarState extends State<_Radar> with SingleTickerProviderStateMixin {
           Container(
             width: 46,
             height: 46,
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               color: AppColors.accent,
               shape: BoxShape.circle,
             ),
@@ -432,7 +429,7 @@ class _SectionLabel extends StatelessWidget {
       padding: const EdgeInsets.only(left: 4, bottom: 10),
       child: Text(
         text.toUpperCase(),
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           fontWeight: FontWeight.w600,
           letterSpacing: 0.3,
@@ -504,7 +501,7 @@ class _DeviceCard extends StatelessWidget {
                       device.name,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w600,
                         color: AppColors.textPrimary,
@@ -515,7 +512,7 @@ class _DeviceCard extends StatelessWidget {
                       '${device.protocol.label} • ${device.host}',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
+                      style: TextStyle(
                         fontSize: 12,
                         color: AppColors.textMuted,
                       ),
@@ -525,7 +522,7 @@ class _DeviceCard extends StatelessWidget {
               ),
               const SizedBox(width: 10),
               if (connected)
-                const _ConnectedChip()
+                _ConnectedChip()
               else
                 _ConnectButton(found: found, onTap: onConnect),
             ],
@@ -562,11 +559,11 @@ class _ConnectedChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const Row(
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Icon(Icons.check, size: 16, color: AppColors.green),
-        SizedBox(width: 5),
+        const SizedBox(width: 5),
         Text(
           'Connected',
           style: TextStyle(
@@ -668,8 +665,8 @@ class _ManualAddCardState extends State<_ManualAddCard> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(4, 0, 4, 11),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 0, 4, 11),
             child: Text(
               'ADD MANUALLY',
               style: TextStyle(
@@ -692,8 +689,8 @@ class _ManualAddCardState extends State<_ManualAddCard> {
               child: DropdownButton<ProtocolType>(
                 value: _protocol,
                 isExpanded: true,
-                icon: const Icon(Icons.expand_more, color: AppColors.textMuted),
-                style: const TextStyle(
+                icon: Icon(Icons.expand_more, color: AppColors.textMuted),
+                style: TextStyle(
                     fontSize: 15, color: AppColors.textPrimary),
                 items: [
                   for (final p in ProtocolType.values)
@@ -722,9 +719,9 @@ class _ManualAddCardState extends State<_ManualAddCard> {
                     autocorrect: false,
                     textInputAction: TextInputAction.done,
                     onSubmitted: (_) => _add(),
-                    style: const TextStyle(
+                    style: TextStyle(
                         fontSize: 15, color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isCollapsed: true,
                       border: InputBorder.none,
                       hintText: 'IP address e.g. 192.168.1.10',

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -39,10 +40,10 @@ class DlnaController extends RemoteController {
     http.Client? client,
     Duration requestTimeout = const Duration(seconds: 5),
     Duration heartbeatInterval = const Duration(seconds: 10),
-  })  : _client = client ?? http.Client(),
-        _ownsClient = client == null,
-        _requestTimeout = requestTimeout,
-        _heartbeatInterval = heartbeatInterval;
+  }) : _client = client ?? http.Client(),
+       _ownsClient = client == null,
+       _requestTimeout = requestTimeout,
+       _heartbeatInterval = heartbeatInterval;
 
   final http.Client _client;
   final bool _ownsClient;
@@ -57,6 +58,10 @@ class DlnaController extends RemoteController {
   /// Like Roku, DLNA is stateless HTTP, so a periodic GET of the descriptor is
   /// what detects the TV going offline and flips the status to `error`.
   Timer? _heartbeat;
+
+  /// Serializes volume/mute read-modify-write cycles so concurrent key presses
+  /// don't race on GetVolume → SetVolume (or GetMute → SetMute).
+  final _VolumeLock _volumeLock = _VolumeLock();
 
   static const String renderingControlType =
       'urn:schemas-upnp-org:service:RenderingControl:1';
@@ -87,13 +92,13 @@ class DlnaController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        supportsPointer: false,
-        supportsTextInput: false,
-        channelButtons: false, // UPnP renderers have no channel control
-        numberPad: false,
-        supportsNavigation: false, // no D-pad/OK/back/home/menu in UPnP
-        supportsPower: false, // no power action in UPnP
-      );
+    supportsPointer: false,
+    supportsTextInput: false,
+    channelButtons: false, // UPnP renderers have no channel control
+    numberPad: false,
+    supportsNavigation: false, // no D-pad/OK/back/home/menu in UPnP
+    supportsPower: false, // no power action in UPnP
+  );
 
   // --- Discovery -------------------------------------------------------------
 
@@ -118,33 +123,33 @@ class DlnaController extends RemoteController {
       if (!out.isClosed) out.add(device);
     }
 
-    final ssdpSub = ssdpSearch(
-      searchTarget: _mediaRendererTarget,
-      timeout: timeout,
-    ).listen(
-      (resp) {
-        final location = resp.header('LOCATION');
-        final uri = location == null ? null : Uri.tryParse(location);
-        final host = (uri != null && uri.host.isNotEmpty) ? uri.host : resp.address;
-        final port = (uri != null && uri.hasPort)
-            ? uri.port
-            : ProtocolType.dlna.defaultPort;
-        resolveAndAdd(host, port);
-      },
-      onError: (_) {},
-      onDone: onSourceDone,
-      cancelOnError: false,
-    );
+    final ssdpSub =
+        ssdpSearch(searchTarget: _mediaRendererTarget, timeout: timeout).listen(
+          (resp) {
+            final location = resp.header('LOCATION');
+            final uri = location == null ? null : Uri.tryParse(location);
+            final host = (uri != null && uri.host.isNotEmpty)
+                ? uri.host
+                : resp.address;
+            final port = (uri != null && uri.hasPort)
+                ? uri.port
+                : ProtocolType.dlna.defaultPort;
+            resolveAndAdd(host, port);
+          },
+          onError: (_) {},
+          onDone: onSourceDone,
+          cancelOnError: false,
+        );
 
-    final scanSub = scanSubnetForAnyPort(
-      {ProtocolType.dlna.defaultPort},
-      timeout: timeout,
-    ).listen(
-      (hit) => resolveAndAdd(hit.host, hit.port),
-      onError: (_) {},
-      onDone: onSourceDone,
-      cancelOnError: false,
-    );
+    final scanSub =
+        scanSubnetForAnyPort({
+          ProtocolType.dlna.defaultPort,
+        }, timeout: timeout).listen(
+          (hit) => resolveAndAdd(hit.host, hit.port),
+          onError: (_) {},
+          onDone: onSourceDone,
+          cancelOnError: false,
+        );
 
     out.onCancel = () {
       ssdpSub.cancel();
@@ -161,7 +166,9 @@ class DlnaController extends RemoteController {
       final desc = await _fetchDescriptor(host, port);
       final friendly = tag(desc.body, 'friendlyName');
       final udn = tag(desc.body, 'UDN');
-      if (friendly != null && friendly.trim().isNotEmpty) name = friendly.trim();
+      if (friendly != null && friendly.trim().isNotEmpty) {
+        name = friendly.trim();
+      }
       if (udn != null && udn.trim().isNotEmpty) id = udn.trim();
     } catch (_) {
       // Keep host-based fallback so the user can still try to connect.
@@ -222,12 +229,23 @@ class DlnaController extends RemoteController {
 
   void _startHeartbeat() {
     _heartbeat?.cancel();
+    // Self-healing + non-self-cancelling: keep probing while a device is set so
+    // the dot tracks the TV both ways — error when it drops, connected when it
+    // returns. Only emit on a real transition (emitStatus doesn't de-dupe). The
+    // `probing` guard skips a tick if the previous probe is still in flight.
+    var probing = false;
     _heartbeat = Timer.periodic(_heartbeatInterval, (_) async {
-      if (_device == null) return;
-      if (!await _reachable()) {
-        _heartbeat?.cancel();
-        _heartbeat = null;
-        emitStatus(ConnectionStatus.error);
+      if (_device == null || probing) return;
+      probing = true;
+      try {
+        final reachable = await _reachable();
+        if (reachable && !status.isConnected) {
+          emitStatus(ConnectionStatus.connected);
+        } else if (!reachable && status.isConnected) {
+          emitStatus(ConnectionStatus.error);
+        }
+      } finally {
+        probing = false;
       }
     });
   }
@@ -266,7 +284,7 @@ class DlnaController extends RemoteController {
       }
     }
     throw const NotReachableException(
-      'Could not read the TV’s media-renderer description.',
+      'Could not read the TV\u2019s media-renderer description.',
     );
   }
 
@@ -288,9 +306,13 @@ class DlnaController extends RemoteController {
         await _avAction('Play', const {'InstanceID': '0', 'Speed': '1'});
       case RemoteKey.pause:
         await _avAction('Pause', const {'InstanceID': '0'});
+      case RemoteKey.stop:
+        await _avAction('Stop', const {'InstanceID': '0'});
       default:
-        throw RemoteException(
-          '${key.name} isn’t available over Cast/DLNA on this TV.',
+        // Key-agnostic on purpose: the message must not change per button, so
+        // tapping different unsupported keys shows one stable (de-duped) banner.
+        throw const RemoteException(
+          'That button isn\u2019t available over Cast on this TV.',
         );
     }
   }
@@ -316,13 +338,21 @@ class DlnaController extends RemoteController {
   }
 
   Future<void> _nudgeVolume(int delta) async {
-    final current = await _currentVolume();
-    final next = (current + delta).clamp(0, 100).toInt();
-    await _rcAction('SetVolume', {
-      'InstanceID': '0',
-      'Channel': 'Master',
-      'DesiredVolume': '$next',
-    });
+    // Guard against overlapping volume read-modify-write cycles (rapid button
+    // presses or multiple remotes). Without this, two concurrent nudges both
+    // read the same current value and the second write clobbers the first.
+    await _volumeLock.acquire();
+    try {
+      final current = await _currentVolume();
+      final next = (current + delta).clamp(0, 100).toInt();
+      await _rcAction('SetVolume', {
+        'InstanceID': '0',
+        'Channel': 'Master',
+        'DesiredVolume': '$next',
+      });
+    } finally {
+      _volumeLock.release();
+    }
   }
 
   Future<int> _currentVolume() async {
@@ -334,16 +364,22 @@ class DlnaController extends RemoteController {
   }
 
   Future<void> _toggleMute() async {
-    final body = await _rcAction('GetMute', const {
-      'InstanceID': '0',
-      'Channel': 'Master',
-    });
-    final muted = intTag(body, 'CurrentMute') == 1;
-    await _rcAction('SetMute', {
-      'InstanceID': '0',
-      'Channel': 'Master',
-      'DesiredMute': muted ? '0' : '1',
-    });
+    // Same guard as _nudgeVolume: prevent lost updates on concurrent toggles.
+    await _volumeLock.acquire();
+    try {
+      final body = await _rcAction('GetMute', const {
+        'InstanceID': '0',
+        'Channel': 'Master',
+      });
+      final muted = intTag(body, 'CurrentMute') == 1;
+      await _rcAction('SetMute', {
+        'InstanceID': '0',
+        'Channel': 'Master',
+        'DesiredMute': muted ? '0' : '1',
+      });
+    } finally {
+      _volumeLock.release();
+    }
   }
 
   Future<String> _rcAction(String action, Map<String, String> args) {
@@ -357,7 +393,9 @@ class DlnaController extends RemoteController {
   Future<String> _avAction(String action, Map<String, String> args) {
     final url = _avTransport;
     if (url == null) {
-      throw const RemoteException('Playback control is unavailable on this TV.');
+      throw const RemoteException(
+        'Playback control is unavailable on this TV.',
+      );
     }
     return _soap(url, avTransportType, action, args);
   }
@@ -409,6 +447,10 @@ class DlnaController extends RemoteController {
 
   // --- Pure helpers (exposed for unit tests) ---------------------------------
 
+  /// XML escape a string for SOAP body text and DIDL metadata values.
+  /// Uses dart:convert HtmlEscape which produces the five standard XML entities.
+  static final XmlEscape _xmlEscape = XmlEscape();
+
   /// Build the SOAP 1.1 envelope for a UPnP action. Argument values are
   /// XML-escaped, so structured values like DIDL metadata can be passed as-is.
   @visibleForTesting
@@ -418,7 +460,7 @@ class DlnaController extends RemoteController {
     Map<String, String> args,
   ) {
     final argsXml = args.entries
-        .map((e) => '<${e.key}>${_xmlEscape(e.value)}</${e.key}>')
+        .map((e) => '<${e.key}>${_xmlEscape.convert(e.value)}</${e.key}>')
         .join();
     return '<?xml version="1.0" encoding="utf-8"?>'
         '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" '
@@ -435,17 +477,18 @@ class DlnaController extends RemoteController {
     final upnpClass = contentType.startsWith('audio')
         ? 'object.item.audioItem.musicTrack'
         : contentType.startsWith('image')
-            ? 'object.item.imageItem.photo'
-            : 'object.item.videoItem';
+        ? 'object.item.imageItem.photo'
+        : 'object.item.videoItem';
+    final esc = _xmlEscape.convert;
     return '<DIDL-Lite '
         'xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" '
         'xmlns:dc="http://purl.org/dc/elements/1.1/" '
         'xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">'
         '<item id="0" parentID="-1" restricted="1">'
-        '<dc:title>${_xmlEscape(title)}</dc:title>'
+        '<dc:title>${esc(title)}</dc:title>'
         '<upnp:class>$upnpClass</upnp:class>'
         '<res protocolInfo="http-get:*:$contentType:*">'
-        '${_xmlEscape(url)}</res>'
+        '${esc(url)}</res>'
         '</item></DIDL-Lite>';
   }
 
@@ -456,8 +499,10 @@ class DlnaController extends RemoteController {
   static Map<String, Uri> parseControlUrls(String xml, Uri descriptorUri) {
     final base = _urlBase(xml, descriptorUri);
     final out = <String, Uri>{};
-    for (final match
-        in RegExp(r'<service>(.*?)</service>', dotAll: true).allMatches(xml)) {
+    for (final match in RegExp(
+      r'<service>(.*?)</service>',
+      dotAll: true,
+    ).allMatches(xml)) {
       final block = match.group(1)!;
       final type = tag(block, 'serviceType');
       final control = tag(block, 'controlURL');
@@ -477,10 +522,11 @@ class DlnaController extends RemoteController {
 
   /// Extract the text of a flat `<name>...</name>` tag; case-insensitive.
   @visibleForTesting
-  static String? tag(String xml, String name) =>
-      RegExp('<$name[^>]*>(.*?)</$name>', dotAll: true, caseSensitive: false)
-          .firstMatch(xml)
-          ?.group(1);
+  static String? tag(String xml, String name) => RegExp(
+    '<$name[^>]*>(.*?)</$name>',
+    dotAll: true,
+    caseSensitive: false,
+  ).firstMatch(xml)?.group(1);
 
   /// Turn a UPnP SOAP fault body into a readable message, or null if it isn't
   /// one.
@@ -501,11 +547,86 @@ class DlnaController extends RemoteController {
     }
     return descriptorUri;
   }
+}
 
-  static String _xmlEscape(String s) => s
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&apos;');
+/// Simple non-reentrant async lock that serializes critical sections without
+/// blocking the event loop. Acquisitions are granted in FIFO order: each
+/// [acquire] resolves once every earlier holder has [release]d.
+///
+/// The earlier version completed the newest waiter's completer on release
+/// instead of the current holder's, so a second overlapping acquire waited on a
+/// completer that was never completed and hung forever. This queue hands the
+/// lock straight to the next waiter, keeping it held across the handoff.
+class _VolumeLock {
+  bool _held = false;
+  final List<Completer<void>> _waiters = [];
+
+  Future<void> acquire() {
+    if (!_held) {
+      _held = true;
+      return Future.value();
+    }
+    final waiter = Completer<void>();
+    _waiters.add(waiter);
+    return waiter.future;
+  }
+
+  void release() {
+    if (_waiters.isNotEmpty) {
+      _waiters.removeAt(0).complete(); // stays held; next waiter now owns it
+    } else {
+      _held = false;
+    }
+  }
+}
+
+/// Produces the five standard XML/HTML named entities (& < > " ').
+class XmlEscape extends Converter<String, String> {
+  const XmlEscape();
+
+  static final String _amp = _entity(38); // &
+  static final String _lt = _entity(60); // <
+  static final String _gt = _entity(62); // >
+  static final String _quot = _entity(34); // "
+  static final String _apos = _entity(39); // '
+
+  static String _entity(int code) {
+    return String.fromCharCode(0x26) + // '&'
+        switch (code) {
+          38 => 'amp',
+          60 => 'lt',
+          62 => 'gt',
+          34 => 'quot',
+          39 => 'apos',
+          _ => throw ArgumentError('unexpected entity char $code'),
+        } +
+        String.fromCharCode(0x3B); // ';'
+  }
+
+  @override
+  String convert(String input) {
+    final buf = StringBuffer();
+    for (final code in input.codeUnits) {
+      switch (code) {
+        case 38:
+          buf.write(_amp);
+          break;
+        case 60:
+          buf.write(_lt);
+          break;
+        case 62:
+          buf.write(_gt);
+          break;
+        case 34:
+          buf.write(_quot);
+          break;
+        case 39:
+          buf.write(_apos);
+          break;
+        default:
+          buf.writeCharCode(code);
+      }
+    }
+    return buf.toString();
+  }
 }

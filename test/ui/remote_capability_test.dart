@@ -7,6 +7,7 @@ import 'package:remote/models/connection_status.dart';
 import 'package:remote/models/device.dart';
 import 'package:remote/models/protocol_type.dart';
 import 'package:remote/models/remote_key.dart';
+import 'package:remote/purchases/purchase_controller.dart';
 import 'package:remote/state/active_device_provider.dart';
 import 'package:remote/state/app_providers.dart';
 import 'package:remote/ui/screens/remote_screen.dart';
@@ -47,6 +48,8 @@ Future<FakeController> _pump(WidgetTester tester, Capabilities caps) async {
       overrides: [
         sharedPreferencesProvider.overrideWithValue(prefs),
         activeControllerProvider.overrideWithValue(fake),
+        // Pro so the header UpgradeButton hides and the More path stays inert.
+        isProProvider.overrideWithValue(true),
       ],
       child: const MaterialApp(home: Scaffold(body: RemoteScreen())),
     ),
@@ -57,7 +60,7 @@ Future<FakeController> _pump(WidgetTester tester, Capabilities caps) async {
 
 void main() {
   group('Remote screen capability gating', () {
-    testWidgets('media-renderer (no navigation) disables OK while mute '
+    testWidgets('media-renderer (no navigation) disables OK while volume '
         'still sends', (tester) async {
       final fake = await _pump(
         tester,
@@ -75,13 +78,13 @@ void main() {
       await tester.pump();
       expect(fake.sentKeys, isNot(contains(RemoteKey.ok)));
 
-      // Mute is the one control that stays live on a renderer-only link.
-      // (Don't pumpAndSettle: the connected status dot pulses indefinitely.)
-      await tester.ensureVisible(find.byIcon(Icons.volume_off));
+      // The VOL rocker stays live on a renderer-only link (it isn't gated by
+      // navigation). (Don't pumpAndSettle: the status dot can pulse.)
+      await tester.ensureVisible(find.byIcon(Icons.add));
       await tester.pump();
-      await tester.tap(find.byIcon(Icons.volume_off));
+      await tester.tap(find.byIcon(Icons.add));
       await tester.pump();
-      expect(fake.sentKeys, contains(RemoteKey.mute));
+      expect(fake.sentKeys, contains(RemoteKey.volumeUp));
     });
 
     testWidgets('full remote shows no hint and OK works', (tester) async {

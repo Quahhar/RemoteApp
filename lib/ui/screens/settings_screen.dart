@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../models/connection_status.dart';
+import '../../purchases/purchase_controller.dart';
 import '../../state/active_device_provider.dart';
 import '../../state/connection_provider.dart';
 import '../../state/preferences_provider.dart';
 import '../../state/saved_devices_provider.dart';
 import '../../theme/app_colors.dart';
+import '../widgets/upgrade_button.dart';
 import 'devices_screen.dart' show protocolIcon;
 
 /// Settings: the active connection, disconnect, forget-all, haptics, and app
@@ -21,6 +23,10 @@ class SettingsScreen extends ConsumerWidget {
     final status = ref.watch(connectionStatusProvider).value ??
         ConnectionStatus.disconnected;
     final savedCount = ref.watch(savedDevicesProvider).length;
+    final isPro = ref.watch(isProProvider);
+    // Rebuild the whole page when the palette flips (AppColors getters aren't
+    // reactive on their own).
+    ref.watch(effectiveDarkModeProvider);
 
     return Scaffold(
       backgroundColor: AppColors.bg,
@@ -29,15 +35,15 @@ class SettingsScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(22, 12, 22, 28),
           children: [
-            const _SectionLabel('Connection'),
+            _SectionLabel('Connection'),
             _Card(
               child: active == null
-                  ? const ListTile(
+                  ? ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: Icon(Icons.tv_off, color: AppColors.textMuted),
-                      title: Text('No device connected'),
-                      subtitle:
-                          Text('Add and select a TV from the Devices tab.'),
+                      title: const Text('No device connected'),
+                      subtitle: const Text(
+                          'Add and select a TV from the Devices tab.'),
                     )
                   : Column(
                       children: [
@@ -66,26 +72,113 @@ class SettingsScreen extends ConsumerWidget {
                     ),
             ),
             const SizedBox(height: 18),
-            const _SectionLabel('Preferences'),
-            _Card(
-              padding: EdgeInsets.zero,
-              child: SwitchListTile(
-                secondary:
-                    const Icon(Icons.vibration, color: AppColors.textMuted),
-                title: const Text('Haptic feedback'),
-                subtitle: const Text('Vibrate on button presses'),
-                activeThumbColor: AppColors.accent,
-                value: ref.watch(hapticsEnabledProvider),
-                onChanged: (v) =>
-                    ref.read(hapticsEnabledProvider.notifier).set(v),
-              ),
-            ),
-            const SizedBox(height: 18),
-            const _SectionLabel('Devices'),
+            _SectionLabel('Omnix Pro'),
             _Card(
               padding: EdgeInsets.zero,
               child: ListTile(
-                leading: const Icon(Icons.delete_sweep_outlined,
+                leading: Icon(
+                  isPro ? Icons.workspace_premium : Icons.lock_open_outlined,
+                  color: AppColors.gold,
+                ),
+                title: Text(isPro ? 'Pro is active' : 'Upgrade to Pro'),
+                subtitle: Text(
+                  isPro
+                      ? 'Ads off · trackpad · keyboard · more'
+                      : 'Remove ads, unlock the trackpad and keyboard',
+                ),
+                trailing:
+                    Icon(Icons.chevron_right, color: AppColors.textMuted),
+                onTap: () => UpgradeButton.open(context),
+              ),
+            ),
+            const SizedBox(height: 18),
+            _SectionLabel('Preferences'),
+            _Card(
+              padding: EdgeInsets.zero,
+              child: Column(
+                children: [
+                  SwitchListTile(
+                    secondary:
+                        Icon(Icons.vibration, color: AppColors.textMuted),
+                    title: const Text('Haptic feedback'),
+                    subtitle: const Text('Vibrate on button presses'),
+                    activeThumbColor: AppColors.accent,
+                    value: ref.watch(hapticsEnabledProvider),
+                    onChanged: (v) =>
+                        ref.read(hapticsEnabledProvider.notifier).set(v),
+                  ),
+                  Divider(
+                    height: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: AppColors.divider,
+                  ),
+                  SwitchListTile(
+                    secondary:
+                        Icon(Icons.gradient, color: AppColors.textMuted),
+                    title: const Text('Animated background'),
+                    subtitle: const Text('Ambient gradient aura behind the app'),
+                    activeThumbColor: AppColors.accent,
+                    value: ref.watch(animatedBackgroundProvider),
+                    onChanged: (v) =>
+                        ref.read(animatedBackgroundProvider.notifier).set(v),
+                  ),
+                  Divider(
+                    height: 1,
+                    indent: 16,
+                    endIndent: 16,
+                    color: AppColors.divider,
+                  ),
+                  ListTile(
+                    leading: Icon(Icons.dark_mode_outlined,
+                        color: AppColors.textMuted),
+                    title: const Text('Dark mode'),
+                    subtitle: Text(
+                      ref.watch(autoDarkModeProvider)
+                          ? 'Automatic · dark 7 PM – 7 AM'
+                          : 'Dark surfaces, same amber accent',
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Switch(
+                          activeThumbColor: AppColors.accent,
+                          value: ref.watch(effectiveDarkModeProvider),
+                          onChanged: (v) async {
+                            // A manual flip takes over from the schedule.
+                            await ref
+                                .read(autoDarkModeProvider.notifier)
+                                .set(false);
+                            await ref.read(darkModeProvider.notifier).set(v);
+                          },
+                        ),
+                        PopupMenuButton<void>(
+                          icon: Icon(Icons.more_vert,
+                              color: AppColors.textMuted),
+                          tooltip: 'Dark mode options',
+                          itemBuilder: (context) => [
+                            CheckedPopupMenuItem<void>(
+                              checked: ref.read(autoDarkModeProvider),
+                              onTap: () => ref
+                                  .read(autoDarkModeProvider.notifier)
+                                  .toggle(),
+                              child:
+                                  const Text('Automatic (dark 7 PM – 7 AM)'),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+            _SectionLabel('Devices'),
+            _Card(
+              padding: EdgeInsets.zero,
+              child: ListTile(
+                leading: Icon(Icons.delete_sweep_outlined,
                     color: AppColors.textMuted),
                 title: const Text('Forget all devices'),
                 subtitle: Text('$savedCount saved'),
@@ -96,23 +189,23 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: 18),
-            const _SectionLabel('About'),
-            const _Card(
+            _SectionLabel('About'),
+            _Card(
               child: Column(
                 children: [
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading:
                         Icon(Icons.info_outline, color: AppColors.textMuted),
-                    title: Text('Remote'),
-                    subtitle: Text('Universal Wi-Fi TV remote · v1.0.0'),
+                    title: const Text('Omnix'),
+                    subtitle: const Text('Universal Wi-Fi TV remote · v1.0.0'),
                   ),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     leading: Icon(Icons.devices_other,
                         color: AppColors.textMuted),
-                    title: Text('Supported'),
-                    subtitle: Text(
+                    title: const Text('Supported'),
+                    subtitle: const Text(
                         'Roku · LG webOS · Samsung · Android TV · Hisense/VIDAA · Cast/DLNA'),
                   ),
                 ],
@@ -153,6 +246,10 @@ class SettingsScreen extends ConsumerWidget {
   }
 }
 
+// _Card and _SectionLabel read AppColors in build, so instantiations above are
+// deliberately non-const: a const instance would be reused across rebuilds and
+// keep the old palette after a dark-mode toggle.
+
 class _Card extends StatelessWidget {
   const _Card({required this.child, this.padding});
   final Widget child;
@@ -189,7 +286,7 @@ class _SectionLabel extends StatelessWidget {
       padding: const EdgeInsets.only(left: 4, bottom: 10),
       child: Text(
         title.toUpperCase(),
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 13,
           letterSpacing: 0.3,
           fontWeight: FontWeight.w600,

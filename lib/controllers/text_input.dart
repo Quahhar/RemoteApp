@@ -62,15 +62,28 @@ List<TextSegment> tokenizeInput(String text) {
     }
   }
 
+  var lastWasCr = false;
   for (final code in text.runes) {
-    if (code == kLineFeed || code == kCarriageReturn) {
+    if (code == kCarriageReturn) {
       flush();
       segments.add(const TextEdit(TextEditKey.enter));
-    } else if (code == kBackspace || code == kDelete) {
+      lastWasCr = true;
+    } else if (code == kLineFeed) {
+      if (lastWasCr) {
+        // CR+LF: already emitted enter for CR, skip the LF.
+        lastWasCr = false;
+        continue;
+      }
       flush();
-      segments.add(const TextEdit(TextEditKey.backspace));
+      segments.add(const TextEdit(TextEditKey.enter));
     } else {
-      buffer.writeCharCode(code);
+      if (code == kBackspace || code == kDelete) {
+        flush();
+        segments.add(const TextEdit(TextEditKey.backspace));
+      } else {
+        buffer.writeCharCode(code);
+      }
+      lastWasCr = false;
     }
   }
   flush();

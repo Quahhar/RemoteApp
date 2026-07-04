@@ -42,4 +42,48 @@ void main() {
     await c.read(animatedBackgroundProvider.notifier).toggle();
     expect(c.read(animatedBackgroundProvider), isFalse);
   });
+
+  test('automatic dark mode defaults on; effective follows the clock', () async {
+    final c = await container();
+    expect(c.read(autoDarkModeProvider), isTrue);
+    expect(
+      c.read(effectiveDarkModeProvider),
+      EffectiveDarkModeNotifier.isNight(DateTime.now()),
+    );
+  });
+
+  test('with automatic off, effective mirrors the manual switch', () async {
+    final c = await container();
+    await c.read(autoDarkModeProvider.notifier).set(false);
+    expect(c.read(effectiveDarkModeProvider), isFalse); // manual default off
+    await c.read(darkModeProvider.notifier).set(true);
+    expect(c.read(effectiveDarkModeProvider), isTrue);
+  });
+
+  test('night window: dark 7 PM – 7 AM local time', () {
+    bool nightAt(int hour, [int minute = 0]) =>
+        EffectiveDarkModeNotifier.isNight(DateTime(2026, 7, 2, hour, minute));
+    expect(nightAt(19), isTrue); // 7 PM sharp
+    expect(nightAt(23), isTrue);
+    expect(nightAt(0), isTrue);
+    expect(nightAt(6, 59), isTrue);
+    expect(nightAt(7), isFalse); // 7 AM sharp
+    expect(nightAt(12), isFalse);
+    expect(nightAt(18, 59), isFalse);
+  });
+
+  test('nextBoundary is the upcoming 7 AM/7 PM flip', () {
+    expect(
+      EffectiveDarkModeNotifier.nextBoundary(DateTime(2026, 7, 2, 10)),
+      DateTime(2026, 7, 2, 19), // daytime -> tonight 7 PM
+    );
+    expect(
+      EffectiveDarkModeNotifier.nextBoundary(DateTime(2026, 7, 2, 21)),
+      DateTime(2026, 7, 3, 7), // evening -> tomorrow 7 AM
+    );
+    expect(
+      EffectiveDarkModeNotifier.nextBoundary(DateTime(2026, 7, 2, 3)),
+      DateTime(2026, 7, 2, 7), // small hours -> this morning 7 AM
+    );
+  });
 }

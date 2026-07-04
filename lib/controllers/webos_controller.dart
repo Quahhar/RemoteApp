@@ -36,6 +36,7 @@ class WebosController extends RemoteController {
   WebSocketChannel? _main;
   WebSocketChannel? _input;
   StreamSubscription<dynamic>? _mainSub;
+  StreamSubscription<dynamic>? _inputSub;
   String? _clientKey;
   int _msgId = 0;
   final Map<String, Completer<Map<String, dynamic>>> _pending = {};
@@ -59,16 +60,54 @@ class WebosController extends RemoteController {
     RemoteKey.channelDown: 'CHANNELDOWN',
     RemoteKey.play: 'PLAY',
     RemoteKey.pause: 'PAUSE',
+    // Extended keys carried by the webOS input socket. Unmapped More-sheet
+    // commands (inputs, picture/sound, smart) have no input-socket button and
+    // surface as "not available".
+    RemoteKey.digit0: '0',
+    RemoteKey.digit1: '1',
+    RemoteKey.digit2: '2',
+    RemoteKey.digit3: '3',
+    RemoteKey.digit4: '4',
+    RemoteKey.digit5: '5',
+    RemoteKey.digit6: '6',
+    RemoteKey.digit7: '7',
+    RemoteKey.digit8: '8',
+    RemoteKey.digit9: '9',
+    RemoteKey.dash: 'DASH',
+    RemoteKey.rewind: 'REWIND',
+    RemoteKey.fastForward: 'FASTFORWARD',
+    RemoteKey.stop: 'STOP',
+    RemoteKey.record: 'RECORD',
+    RemoteKey.guide: 'GUIDE',
+    RemoteKey.subtitles: 'CC',
+    RemoteKey.colorRed: 'RED',
+    RemoteKey.colorGreen: 'GREEN',
+    RemoteKey.colorYellow: 'YELLOW',
+    RemoteKey.colorBlue: 'BLUE',
   };
 
   static const List<String> _permissions = [
-    'LAUNCH', 'LAUNCH_WEBAPP', 'APP_TO_APP', 'CLOSE',
-    'CONTROL_AUDIO', 'CONTROL_DISPLAY', 'CONTROL_INPUT_JOYSTICK',
-    'CONTROL_INPUT_MEDIA_RECORDING', 'CONTROL_INPUT_MEDIA_PLAYBACK',
-    'CONTROL_INPUT_TV', 'CONTROL_POWER', 'CONTROL_INPUT_TEXT',
-    'CONTROL_MOUSE_AND_KEYBOARD', 'READ_APP_STATUS', 'READ_CURRENT_CHANNEL',
-    'READ_INPUT_DEVICE_LIST', 'READ_NETWORK_STATE', 'READ_RUNNING_APPS',
-    'READ_TV_CHANNEL_LIST', 'WRITE_NOTIFICATION_TOAST', 'READ_POWER_STATE',
+    'LAUNCH',
+    'LAUNCH_WEBAPP',
+    'APP_TO_APP',
+    'CLOSE',
+    'CONTROL_AUDIO',
+    'CONTROL_DISPLAY',
+    'CONTROL_INPUT_JOYSTICK',
+    'CONTROL_INPUT_MEDIA_RECORDING',
+    'CONTROL_INPUT_MEDIA_PLAYBACK',
+    'CONTROL_INPUT_TV',
+    'CONTROL_POWER',
+    'CONTROL_INPUT_TEXT',
+    'CONTROL_MOUSE_AND_KEYBOARD',
+    'READ_APP_STATUS',
+    'READ_CURRENT_CHANNEL',
+    'READ_INPUT_DEVICE_LIST',
+    'READ_NETWORK_STATE',
+    'READ_RUNNING_APPS',
+    'READ_TV_CHANNEL_LIST',
+    'WRITE_NOTIFICATION_TOAST',
+    'READ_POWER_STATE',
     'READ_COUNTRY_INFO',
   ];
 
@@ -77,11 +116,11 @@ class WebosController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        supportsPointer: true, // Magic Remote pointer via the input socket
-        supportsTextInput: true, // webOS IME requests
-        channelButtons: true,
-        numberPad: true,
-      );
+    supportsPointer: true, // Magic Remote pointer via the input socket
+    supportsTextInput: true, // webOS IME requests
+    channelButtons: true,
+    numberPad: true,
+  );
 
   @override
   String? get authToken => _clientKey;
@@ -94,23 +133,28 @@ class WebosController extends RemoteController {
     final client = http.Client();
     final controller = StreamController<Device>();
 
-    final sub = ssdpSearch(
-      searchTarget: 'urn:lge-com:service:webos-second-screen:1',
-      timeout: timeout,
-    ).listen(
-      (resp) async {
-        final host = resp.host;
-        if (!seen.add(host)) return;
-        final device = await _describe(client, host, resp.header('LOCATION'));
-        if (!controller.isClosed) controller.add(device);
-      },
-      onError: (_) {},
-      onDone: () {
-        client.close();
-        controller.close();
-      },
-      cancelOnError: false,
-    );
+    final sub =
+        ssdpSearch(
+          searchTarget: 'urn:lge-com:service:webos-second-screen:1',
+          timeout: timeout,
+        ).listen(
+          (resp) async {
+            final host = resp.host;
+            if (!seen.add(host)) return;
+            final device = await _describe(
+              client,
+              host,
+              resp.header('LOCATION'),
+            );
+            if (!controller.isClosed) controller.add(device);
+          },
+          onError: (_) {},
+          onDone: () {
+            client.close();
+            controller.close();
+          },
+          cancelOnError: false,
+        );
     controller.onCancel = () {
       sub.cancel();
       client.close();
@@ -118,15 +162,23 @@ class WebosController extends RemoteController {
     return controller.stream;
   }
 
-  Future<Device> _describe(http.Client client, String host, String? location) async {
+  Future<Device> _describe(
+    http.Client client,
+    String host,
+    String? location,
+  ) async {
     var name = 'LG webOS ($host)';
     var id = 'webos-$host';
     if (location != null) {
       try {
-        final res = await client.get(Uri.parse(location)).timeout(connectTimeout);
+        final res = await client
+            .get(Uri.parse(location))
+            .timeout(connectTimeout);
         final friendly = _xmlTag(res.body, 'friendlyName');
         final udn = _xmlTag(res.body, 'UDN');
-        if (friendly != null && friendly.trim().isNotEmpty) name = friendly.trim();
+        if (friendly != null && friendly.trim().isNotEmpty) {
+          name = friendly.trim();
+        }
         if (udn != null && udn.trim().isNotEmpty) id = udn.trim();
       } catch (_) {
         // Keep host-based fallback.
@@ -136,15 +188,16 @@ class WebosController extends RemoteController {
   }
 
   static String? _xmlTag(String xml, String tag) => RegExp(
-        '<$tag[^>]*>(.*?)</$tag>',
-        dotAll: true,
-        caseSensitive: false,
-      ).firstMatch(xml)?.group(1);
+    '<$tag[^>]*>(.*?)</$tag>',
+    dotAll: true,
+    caseSensitive: false,
+  ).firstMatch(xml)?.group(1);
 
   // --- Connection ------------------------------------------------------------
 
   @override
   Future<void> connect(Device device) async {
+    if (_main != null) await _teardown();
     emitStatus(ConnectionStatus.connecting);
     _clientKey = device.authToken;
     try {
@@ -161,7 +214,16 @@ class WebosController extends RemoteController {
         cancelOnError: true,
       );
 
-      await _register();
+      try {
+        await _register();
+      } on PairingRejectedException {
+        // A stored client-key the TV no longer recognises (TV factory reset,
+        // permissions cleared) registers as an error and would fail forever.
+        // Retry once without it, which triggers a fresh Allow prompt instead.
+        if (_clientKey == null) rethrow;
+        _clientKey = null;
+        await _register();
+      }
       await _openInputSocket();
       emitStatus(ConnectionStatus.connected);
     } on RemoteException {
@@ -196,12 +258,15 @@ class WebosController extends RemoteController {
     final response = await completer.future.timeout(
       pairingTimeout,
       onTimeout: () => throw const PairingRequiredException(
-        'Pairing timed out — accept the prompt on your LG TV',
+        'Pairing timed out. Accept the prompt on your LG TV.',
       ),
     );
     final type = response['type'];
     if (type == 'error') {
-      throw const PairingRejectedException();
+      throw const PairingRejectedException(
+        'Your LG TV declined the connection. Choose Allow on the TV prompt, '
+        'then try again.',
+      );
     }
     final key = (response['payload'] as Map?)?['client-key'] as String?;
     if (key != null) _clientKey = key;
@@ -213,9 +278,25 @@ class WebosController extends RemoteController {
     );
     final path = (response['payload'] as Map?)?['socketPath'] as String?;
     if (path == null) return; // pointer optional; buttons still work via SSAP
-    _input = IOWebSocketChannel.connect(
-      Uri.parse(path),
+    final uri = Uri.tryParse(path);
+    if (uri == null || !uri.hasAuthority) {
+      if (kDebugMode) debugPrint('[WebOS] invalid input socket path: $path');
+      return;
+    }
+    final input = IOWebSocketChannel.connect(
+      uri,
       connectTimeout: connectTimeout,
+    );
+    _input = input;
+    // The input socket carries every key except power, so if it drops silently
+    // (LG drops idle secondary sockets) we must treat it as a lost session —
+    // otherwise the dot stays green while D-pad/pointer writes vanish. Route its
+    // drop through the same _fail() path as _main.
+    _inputSub = input.stream.listen(
+      null,
+      onError: (_) => _fail(),
+      onDone: _fail,
+      cancelOnError: true,
     );
   }
 
@@ -245,11 +326,17 @@ class WebosController extends RemoteController {
       await _request('ssap://system/turnOff');
       return;
     }
+    final name = buttonNames[key];
+    if (name == null) {
+      // Extended More-sheet key with no webOS input-socket button. Key-agnostic
+      // so repeats de-dupe into one SnackBar.
+      throw const RemoteException("That button isn't available on this TV.");
+    }
     final input = _input;
     if (input == null) {
       throw const RemoteException('Pointer input socket unavailable');
     }
-    input.sink.add(buttonFrame(key));
+    input.sink.add('type:button\nname:$name\n\n');
   }
 
   /// The exact webOS input-socket frame for a button press. Pure + exposed for
@@ -262,9 +349,7 @@ class WebosController extends RemoteController {
   Future<void> movePointer(double dx, double dy) async {
     final input = _input;
     if (input == null) throw const RemoteException('Pointer unavailable');
-    input.sink.add(
-      'type:move\ndx:${dx.round()}\ndy:${dy.round()}\ndown:0\n\n',
-    );
+    input.sink.add('type:move\ndx:${dx.round()}\ndy:${dy.round()}\ndown:0\n\n');
   }
 
   @override
@@ -339,7 +424,8 @@ class WebosController extends RemoteController {
   }
 
   void _fail() {
-    if (status == ConnectionStatus.connected) {
+    if (status == ConnectionStatus.connecting ||
+        status == ConnectionStatus.connected) {
       emitStatus(ConnectionStatus.error);
     }
     // Clean up the dead session: complete pending completers, cancel the
@@ -355,8 +441,16 @@ class WebosController extends RemoteController {
     _pending.clear();
     await _mainSub?.cancel();
     _mainSub = null;
-    await _input?.sink.close();
-    await _main?.sink.close();
+    // Cancel the input subscription *before* closing its sink, so our own
+    // close() doesn't bounce back through onDone -> _fail() -> _teardown().
+    await _inputSub?.cancel();
+    _inputSub = null;
+    try {
+      await _input?.sink.close();
+    } catch (_) {}
+    try {
+      await _main?.sink.close();
+    } catch (_) {}
     _input = null;
     _main = null;
   }
@@ -369,7 +463,7 @@ class WebosController extends RemoteController {
 
   @override
   void dispose() {
-    _teardown();
+    unawaited(_teardown());
     super.dispose();
   }
 }

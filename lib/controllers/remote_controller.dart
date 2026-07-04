@@ -42,6 +42,7 @@ abstract class RemoteController {
 
   @protected
   void emitStatus(ConnectionStatus next) {
+    if (_status == next) return;
     _status = next;
     if (!_statusController.isClosed) _statusController.add(next);
   }
@@ -83,12 +84,14 @@ abstract class RemoteController {
 
   /// Relative pointer move (touchpad). Override when
   /// [Capabilities.supportsPointer]; the default throws [UnsupportedError].
-  Future<void> movePointer(double dx, double dy) =>
-      throw UnsupportedError('${protocol.label} does not support pointer input');
+  Future<void> movePointer(double dx, double dy) => throw UnsupportedError(
+    '${protocol.label} does not support pointer input',
+  );
 
   /// Pointer click/tap. Override when [Capabilities.supportsPointer].
-  Future<void> click() =>
-      throw UnsupportedError('${protocol.label} does not support pointer input');
+  Future<void> click() => throw UnsupportedError(
+    '${protocol.label} does not support pointer input',
+  );
 
   /// Release all resources. Subclasses overriding MUST call super.
   @mustCallSuper
@@ -115,7 +118,7 @@ class NotReachableException extends RemoteException {
 /// Samsung allow prompt) before it will accept commands.
 class PairingRequiredException extends RemoteException {
   const PairingRequiredException([
-    super.message = 'Pairing required — accept the prompt on your TV',
+    super.message = 'Pairing required. Accept the prompt on your TV.',
   ]);
 }
 

@@ -11,8 +11,9 @@ import 'saved_devices_provider.dart';
 /// The currently selected device (or null). Restored from persistence on start
 /// but NOT auto-connected — call [ActiveDeviceNotifier.connect] (e.g. when the
 /// Remote screen mounts) to establish the link.
-final activeDeviceProvider =
-    NotifierProvider<ActiveDeviceNotifier, Device?>(ActiveDeviceNotifier.new);
+final activeDeviceProvider = NotifierProvider<ActiveDeviceNotifier, Device?>(
+  ActiveDeviceNotifier.new,
+);
 
 class ActiveDeviceNotifier extends Notifier<Device?> {
   ControllerRegistry get _registry => ref.read(controllerRegistryProvider);
@@ -35,9 +36,18 @@ class ActiveDeviceNotifier extends Notifier<Device?> {
     if (previous != null) {
       await _registry.controllerFor(previous.protocol).disconnect();
     }
-    state = device; // connect() reads state
-    await connect(); // throws on failure → nothing below runs, nothing persisted
-    // connect() already upserted the device with a fresh lastConnected on success.
+    // Connect before setting state so a failed connect doesn't leave a phantom
+    // "selected" device in the UI. The controller.connect() reads device directly.
+    await _registry.controllerFor(device.protocol).connect(device);
+    // Persist a freshly-obtained pairing credential (LG/Samsung/Android TV) so
+    // the next connect skips the on-TV prompt.
+    final credential = _registry.controllerFor(device.protocol).authToken;
+    var updated = device.copyWith(lastConnected: DateTime.now());
+    if (credential != null && credential != device.authToken) {
+      updated = updated.copyWith(authToken: credential);
+    }
+    state = updated;
+    await ref.read(savedDevicesProvider.notifier).upsert(updated);
     await _store.saveActiveId(device.id);
   }
 

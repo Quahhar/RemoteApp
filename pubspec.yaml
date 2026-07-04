@@ -56,6 +56,10 @@ dependencies:
   # MD5 for the VIDAA dynamic-credential algorithm.
   crypto: ^3.0.3
   multicast_dns: ^0.3.3+1
+  google_mobile_ads: ^9.0.0
+  in_app_purchase: ^3.3.0
+  # On-device voice dictation for the Trackpad "Type to send" mic button.
+  speech_to_text: ^7.0.0
 
 dev_dependencies:
   flutter_test:
@@ -67,6 +71,21 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+
+  # Generates Android + iOS launcher icons from a single source PNG. Drop your
+  # 1024x1024 artwork at assets/icon/app_icon.png, then run:
+  #   flutter pub run flutter_launcher_icons
+  flutter_launcher_icons: ^0.14.4
+
+# App-icon generation config (consumed by flutter_launcher_icons above).
+flutter_launcher_icons:
+  android: true
+  ios: true
+  remove_alpha_ios: true # App Store rejects icons with transparency.
+  image_path: "assets/icon/app_icon.png"
+  # Optional Android adaptive icon — uncomment and supply a foreground PNG:
+  # adaptive_icon_background: "#FFFFFF"
+  # adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

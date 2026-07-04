@@ -8,6 +8,7 @@ import '../state/active_device_provider.dart';
 import '../state/discovery_provider.dart';
 import '../state/navigation_provider.dart';
 import '../state/preferences_provider.dart';
+import 'snackbar.dart';
 
 /// Fire a light haptic tap if the user hasn't disabled haptics in Settings.
 void hapticTap(WidgetRef ref) {
@@ -29,19 +30,18 @@ Future<void> pressKey(BuildContext context, WidgetRef ref, RemoteKey key) async 
   try {
     await controller.sendKey(key);
   } on RemoteException catch (e) {
-    messenger.showSnackBar(SnackBar(content: Text(e.message)));
+    showSnack(messenger, e.message);
   } catch (_) {
-    messenger.showSnackBar(
-      const SnackBar(content: Text('Failed to send command')),
-    );
+    showSnack(messenger, 'Couldn’t send that command');
   }
 }
 
 /// No device is connected: tell the user, switch to the Devices tab, and kick
 /// off a scan so a TV can be picked immediately.
 void promptNoDevice(BuildContext context, WidgetRef ref) {
-  ScaffoldMessenger.of(context).showSnackBar(
-    const SnackBar(content: Text('No device connected — scanning for TVs…')),
+  showSnack(
+    ScaffoldMessenger.of(context),
+    'No device connected. Scanning for TVs…',
   );
   ref.read(selectedTabProvider.notifier).select(HomeTab.devices);
   ref.read(discoveryProvider.notifier).scan();

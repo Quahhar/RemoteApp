@@ -25,7 +25,7 @@ import 'text_input.dart';
 /// port to 8001.
 class TizenController extends RemoteController {
   TizenController({
-    this.appName = 'Remote',
+    this.appName = 'Omnix',
     this.connectTimeout = const Duration(seconds: 8),
     this.pairingTimeout = const Duration(seconds: 45),
   });
@@ -59,31 +59,73 @@ class TizenController extends RemoteController {
     RemoteKey.channelDown: 'KEY_CHDOWN',
     RemoteKey.play: 'KEY_PLAY',
     RemoteKey.pause: 'KEY_PAUSE',
+    // Extended keys. Samsung's remote-control channel accepts a wide KEY_*
+    // vocabulary; the subset below works across most Tizen models. Unmapped
+    // More-sheet commands surface as "not available".
+    RemoteKey.digit0: 'KEY_0',
+    RemoteKey.digit1: 'KEY_1',
+    RemoteKey.digit2: 'KEY_2',
+    RemoteKey.digit3: 'KEY_3',
+    RemoteKey.digit4: 'KEY_4',
+    RemoteKey.digit5: 'KEY_5',
+    RemoteKey.digit6: 'KEY_6',
+    RemoteKey.digit7: 'KEY_7',
+    RemoteKey.digit8: 'KEY_8',
+    RemoteKey.digit9: 'KEY_9',
+    RemoteKey.rewind: 'KEY_REWIND',
+    RemoteKey.fastForward: 'KEY_FF',
+    RemoteKey.stop: 'KEY_STOP',
+    RemoteKey.record: 'KEY_REC',
+    RemoteKey.liveTv: 'KEY_DTV',
+    RemoteKey.guide: 'KEY_GUIDE',
+    RemoteKey.source: 'KEY_SOURCE',
+    RemoteKey.subtitles: 'KEY_CAPTION',
+    RemoteKey.pictureMode: 'KEY_PMODE',
+    RemoteKey.sleep: 'KEY_SLEEP',
+    RemoteKey.aspect: 'KEY_PICTURE_SIZE',
+    RemoteKey.audioTrack: 'KEY_MTS',
+    RemoteKey.colorRed: 'KEY_RED',
+    RemoteKey.colorGreen: 'KEY_GREEN',
+    RemoteKey.colorYellow: 'KEY_YELLOW',
+    RemoteKey.colorBlue: 'KEY_BLUE',
+    RemoteKey.inputHdmi1: 'KEY_HDMI1',
+    RemoteKey.inputHdmi2: 'KEY_HDMI2',
+    RemoteKey.inputHdmi3: 'KEY_HDMI3',
+    RemoteKey.inputAv: 'KEY_AV1',
+    RemoteKey.inputTv: 'KEY_TV',
+    RemoteKey.settings: 'KEY_TOOLS',
+    RemoteKey.search: 'KEY_SEARCH',
   };
 
   /// The JSON frame Samsung expects for a key press. Pure + exposed for tests.
-  static String commandFor(RemoteKey key) => keyFrame(keyCodes[key]!);
+  static String commandFor(RemoteKey key) {
+    final code = keyCodes[key];
+    if (code == null) {
+      throw ArgumentError('$key has no Tizen key code');
+    }
+    return keyFrame(code);
+  }
 
   /// A raw `SendRemoteKey` frame for an arbitrary Samsung key code.
   static String keyFrame(String keyCode) => jsonEncode({
-        'method': 'ms.remote.control',
-        'params': {
-          'Cmd': 'Click',
-          'DataOfCmd': keyCode,
-          'Option': 'false',
-          'TypeOfRemote': 'SendRemoteKey',
-        },
-      });
+    'method': 'ms.remote.control',
+    'params': {
+      'Cmd': 'Click',
+      'DataOfCmd': keyCode,
+      'Option': 'false',
+      'TypeOfRemote': 'SendRemoteKey',
+    },
+  });
 
   /// A `SendInputString` frame carrying base64-encoded text for the on-TV IME.
   static String inputStringFrame(String text) => jsonEncode({
-        'method': 'ms.remote.control',
-        'params': {
-          'Cmd': base64.encode(utf8.encode(text)),
-          'DataOfCmd': 'base64',
-          'TypeOfRemote': 'SendInputString',
-        },
-      });
+    'method': 'ms.remote.control',
+    'params': {
+      'Cmd': base64.encode(utf8.encode(text)),
+      'DataOfCmd': 'base64',
+      'TypeOfRemote': 'SendInputString',
+    },
+  });
 
   /// Ordered wire frames for [text]: a `SendInputString` per printable run,
   /// plus `KEY_ENTER` / `KEY_DELETE` for edit keys. Pure + exposed for tests.
@@ -108,11 +150,11 @@ class TizenController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        supportsPointer: false,
-        supportsTextInput: true, // SendInputString, where the model's IME allows
-        channelButtons: true,
-        numberPad: true,
-      );
+    supportsPointer: false,
+    supportsTextInput: true, // SendInputString, where the model's IME allows
+    channelButtons: true,
+    numberPad: true,
+  );
 
   @override
   String? get authToken => _token;
@@ -125,23 +167,24 @@ class TizenController extends RemoteController {
     final client = http.Client();
     final out = StreamController<Device>();
 
-    final sub = ssdpSearch(
-      searchTarget: 'urn:samsung.com:device:RemoteControlReceiver:1',
-      timeout: timeout,
-    ).listen(
-      (resp) async {
-        final host = resp.host;
-        if (!seen.add(host)) return;
-        final device = await _describe(client, host);
-        if (!out.isClosed) out.add(device);
-      },
-      onError: (_) {},
-      onDone: () {
-        client.close();
-        out.close();
-      },
-      cancelOnError: false,
-    );
+    final sub =
+        ssdpSearch(
+          searchTarget: 'urn:samsung.com:device:RemoteControlReceiver:1',
+          timeout: timeout,
+        ).listen(
+          (resp) async {
+            final host = resp.host;
+            if (!seen.add(host)) return;
+            final device = await _describe(client, host);
+            if (!out.isClosed) out.add(device);
+          },
+          onError: (_) {},
+          onDone: () {
+            client.close();
+            out.close();
+          },
+          cancelOnError: false,
+        );
     out.onCancel = () {
       sub.cancel();
       client.close();
@@ -153,8 +196,9 @@ class TizenController extends RemoteController {
     var name = 'Samsung TV ($host)';
     var id = 'tizen-$host';
     try {
-      final res =
-          await client.get(Uri.parse('http://$host:8001/api/v2/')).timeout(connectTimeout);
+      final res = await client
+          .get(Uri.parse('http://$host:8001/api/v2/'))
+          .timeout(connectTimeout);
       final body = jsonDecode(res.body) as Map<String, dynamic>;
       final device = body['device'] as Map<String, dynamic>?;
       final n = device?['name'] as String?;
@@ -174,17 +218,24 @@ class TizenController extends RemoteController {
   /// percent-encoded (the base64 `name` can contain `+`/`/`/`=`, and the TV's
   /// token is opaque) so the URL stays well-formed. Pure + exposed for tests.
   @visibleForTesting
-  static String channelUri(String host, int port, String appName, String? token) {
+  static String channelUri(
+    String host,
+    int port,
+    String appName,
+    String? token,
+  ) {
     final scheme = port == 8001 ? 'ws' : 'wss';
     final name = Uri.encodeQueryComponent(base64.encode(utf8.encode(appName)));
-    final tok =
-        token == null ? '' : '&token=${Uri.encodeQueryComponent(token)}';
+    final tok = token == null
+        ? ''
+        : '&token=${Uri.encodeQueryComponent(token)}';
     return '$scheme://$host:$port/api/v2/channels/samsung.remote.control'
         '?name=$name$tok';
   }
 
   @override
   Future<void> connect(Device device) async {
+    if (_channel != null) await _teardown();
     emitStatus(ConnectionStatus.connecting);
     _token = device.authToken;
     final port = device.effectivePort;
@@ -197,8 +248,10 @@ class TizenController extends RemoteController {
         // Samsung TVs present a self-signed certificate.
         final httpClient = HttpClient()
           ..badCertificateCallback = (_, _, _) => true;
-        socket = await WebSocket.connect(url, customClient: httpClient)
-            .timeout(connectTimeout);
+        socket = await WebSocket.connect(
+          url,
+          customClient: httpClient,
+        ).timeout(connectTimeout);
       } else {
         socket = await WebSocket.connect(url).timeout(connectTimeout);
       }
@@ -215,7 +268,7 @@ class TizenController extends RemoteController {
       await completer.future.timeout(
         pairingTimeout,
         onTimeout: () => throw const PairingRequiredException(
-          'Pairing timed out — choose Allow on your Samsung TV',
+          'Pairing timed out. Choose Allow on your Samsung TV.',
         ),
       );
       emitStatus(ConnectionStatus.connected);
@@ -243,13 +296,26 @@ class TizenController extends RemoteController {
     }
     switch (message['event']) {
       case 'ms.channel.connect':
-        final token = (message['data'] as Map?)?['token'];
-        if (token != null) _token = token.toString();
-        _connect?.complete();
-        _connect = null;
+        if (_connect != null && !_connect!.isCompleted) {
+          final token = (message['data'] as Map?)?['token'];
+          if (token != null) _token = token.toString();
+          _connect!.complete();
+          _connect = null;
+        }
       case 'ms.channel.unauthorized':
-        _connect?.completeError(const PairingRejectedException());
-        _connect = null;
+        if (_connect != null && !_connect!.isCompleted) {
+          // A remembered "Deny" on the TV lands here with no prompt shown, so
+          // spell out where to clear it instead of a bare "Pairing rejected".
+          _connect!.completeError(
+            const PairingRejectedException(
+              'Your Samsung TV denied the connection. Choose Allow on the TV — '
+              'if no prompt appears, remove old entries under Settings → '
+              'General → External Device Manager → Device Connection Manager, '
+              'then try again.',
+            ),
+          );
+          _connect = null;
+        }
     }
   }
 
@@ -257,7 +323,13 @@ class TizenController extends RemoteController {
   Future<void> sendKey(RemoteKey key) async {
     final channel = _channel;
     if (channel == null) throw const RemoteException('Not connected');
-    channel.sink.add(commandFor(key));
+    final code = keyCodes[key];
+    if (code == null) {
+      // Extended More-sheet key with no Samsung code. Key-agnostic so repeats
+      // de-dupe into one SnackBar.
+      throw const RemoteException("That button isn't available on this TV.");
+    }
+    channel.sink.add(keyFrame(code));
   }
 
   @override
@@ -266,6 +338,9 @@ class TizenController extends RemoteController {
     if (channel == null) throw const RemoteException('Not connected');
     for (final frame in inputFrames(text)) {
       channel.sink.add(frame);
+      // Yield to the event loop so the WebSocket's internal buffer has a
+      // chance to drain; prevents buffer overflow on long text strings.
+      await Future<void>.delayed(Duration.zero);
     }
   }
 
@@ -274,7 +349,8 @@ class TizenController extends RemoteController {
       _connect!.completeError(const ConnectionLostException());
       _connect = null;
     }
-    if (status == ConnectionStatus.connected) {
+    if (status == ConnectionStatus.connecting ||
+        status == ConnectionStatus.connected) {
       emitStatus(ConnectionStatus.error);
     }
     // Close/null the dead socket so sendKey/sendText don't write to it and a
@@ -285,7 +361,9 @@ class TizenController extends RemoteController {
   Future<void> _teardown() async {
     await _sub?.cancel();
     _sub = null;
-    await _channel?.sink.close();
+    try {
+      await _channel?.sink.close();
+    } catch (_) {}
     _channel = null;
   }
 
@@ -297,7 +375,7 @@ class TizenController extends RemoteController {
 
   @override
   void dispose() {
-    _teardown();
+    unawaited(_teardown());
     super.dispose();
   }
 }

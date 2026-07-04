@@ -12,14 +12,16 @@ import '../models/protocol_type.dart';
 /// (common on home Wi-Fi with AP isolation). We deliberately only list ports for
 /// protocols that have a working controller — finding a TV we can't drive would
 /// be a dead end.
+/// Where a platform exposes two ports (ws/wss, remote/pairing) only one is
+/// probed — any TV with the sibling port open has this one open too, and every
+/// extra port multiplies the scan's concurrent sockets (which exhausted the
+/// process fd limit on phones and made the whole scan silently find nothing).
 const Map<int, ProtocolType> kTvDiscoveryPorts = {
   8060: ProtocolType.roku, // Roku ECP
-  3000: ProtocolType.webos, // LG webOS SSAP (ws)
-  3001: ProtocolType.webos, // LG webOS SSAP (wss)
-  8001: ProtocolType.tizen, // Samsung Tizen (ws)
-  8002: ProtocolType.tizen, // Samsung Tizen (wss)
-  6466: ProtocolType.androidtv, // Android TV remote v2
-  6467: ProtocolType.androidtv, // Android TV pairing
+  3000: ProtocolType.webos, // LG webOS SSAP (ws; wss 3001 implied)
+  8001: ProtocolType.tizen, // Samsung Tizen (ws; open on all model years)
+  8002: ProtocolType.tizen, // Samsung Tizen (wss — the connect port)
+  6466: ProtocolType.androidtv, // Android TV remote v2 (pairing 6467 implied)
   36669: ProtocolType.vidaa, // Hisense / VIDAA MQTT
 };
 
@@ -53,9 +55,13 @@ Stream<Device> discoverTvsByPortScan({
 Stream<({String host, int port})> scanSubnetForAnyPort(
   Set<int> ports, {
   Duration timeout = const Duration(seconds: 8),
-  Duration perHost = const Duration(milliseconds: 600),
+  // Plenty for a same-subnet TCP connect; keeps 11 batches inside [timeout].
+  Duration perHost = const Duration(milliseconds: 500),
   Duration startDelay = const Duration(milliseconds: 1200),
-  int batch = 64,
+  // batch × ports = concurrent sockets. Keep well under the process fd limit
+  // (256 on iOS): 64 hosts × 8 ports used to open ~512 sockets at once, which
+  // made every probe fail with "too many open files" and the scan find nothing.
+  int batch = 24,
 }) {
   final out = StreamController<({String host, int port})>();
   var cancelled = false;
@@ -64,11 +70,12 @@ Stream<({String host, int port})> scanSubnetForAnyPort(
   Future<void> probeHost(String host) async {
     final done = Completer<int?>();
     var pending = ports.length;
+    final sockets = <Socket>[];
     for (final port in ports) {
       unawaited(
         Socket.connect(host, port, timeout: perHost).then(
           (socket) {
-            socket.destroy();
+            sockets.add(socket);
             if (!done.isCompleted) done.complete(port);
           },
           onError: (Object _) {
@@ -79,6 +86,13 @@ Stream<({String host, int port})> scanSubnetForAnyPort(
       );
     }
     final port = await done.future;
+    // Close all sockets — the winning one was used for detection only,
+    // the losing ones were never completed and leak file descriptors.
+    for (final s in sockets) {
+      try {
+        s.destroy();
+      } catch (_) {}
+    }
     if (port != null && !cancelled && !out.isClosed) {
       out.add((host: host, port: port));
     }

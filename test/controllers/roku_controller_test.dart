@@ -31,14 +31,18 @@ const _deviceInfoXml = '''
 
 void main() {
   group('RemoteKey -> Roku ECP key mapping', () {
-    test('every RemoteKey maps to a non-empty Roku key name', () {
-      for (final key in RemoteKey.values) {
+    test('every core RemoteKey maps to a non-empty Roku key name', () {
+      for (final key in RemoteKey.core) {
         final name = RokuController.keyNames[key];
         expect(name, isNotNull, reason: 'No Roku mapping for ${key.name}');
         expect(name, isNotEmpty, reason: 'Empty Roku mapping for ${key.name}');
       }
-      // No stray/duplicate entries: exactly one mapping per key.
-      expect(RokuController.keyNames.length, RemoteKey.values.length);
+    });
+
+    test('every mapped key has a non-empty ECP name', () {
+      for (final entry in RokuController.keyNames.entries) {
+        expect(entry.value, isNotEmpty, reason: 'Empty mapping for ${entry.key}');
+      }
     });
 
     test('documented special-case mappings are correct', () {
@@ -50,8 +54,8 @@ void main() {
       expect(RokuController.keyNames[RemoteKey.pause], 'Play');
     });
 
-    // Each key must POST to /keypress/{KeyName} on the device.
-    for (final key in RemoteKey.values) {
+    // Each mapped key must POST to /keypress/{KeyName} on the device.
+    for (final key in RokuController.keyNames.keys) {
       test('sendKey(${key.name}) POSTs /keypress/${RokuController.keyNames[key]}',
           () async {
         final requests = <http.Request>[];
@@ -78,6 +82,20 @@ void main() {
     }
   });
 
+  group('unsupported extended keys', () {
+    test('an unmapped More-sheet key throws a RemoteException', () async {
+      final client = MockClient((req) async => http.Response('', 200));
+      final controller = RokuController(client: client);
+      await controller.connect(_device);
+      // Roku ECP has no colour buttons.
+      await expectLater(
+        controller.sendKey(RemoteKey.colorRed),
+        throwsA(isA<RemoteException>()),
+      );
+      controller.dispose();
+    });
+  });
+
   group('connect()', () {
     test('200 from device-info -> connected', () async {
       final client = MockClient((req) async => http.Response(_deviceInfoXml, 200));
@@ -87,12 +105,24 @@ void main() {
       controller.dispose();
     });
 
-    test('non-200 -> NotReachableException + error status', () async {
-      final client = MockClient((req) async => http.Response('', 500));
+    test('non-200 -> "control blocked" RemoteException + error status',
+        () async {
+      // The TV answered HTTP, so it IS reachable — the refusal means its
+      // "Control by mobile apps" setting is off. The error must say so
+      // (with the on-TV fix) rather than claim the TV is unreachable.
+      final client = MockClient((req) async => http.Response('', 403));
       final controller = RokuController(client: client);
       await expectLater(
         controller.connect(_device),
-        throwsA(isA<NotReachableException>()),
+        throwsA(
+          isA<RemoteException>()
+              .having((e) => e, 'type', isNot(isA<NotReachableException>()))
+              .having(
+                (e) => e.message,
+                'message',
+                RokuController.controlBlockedMessage,
+              ),
+        ),
       );
       expect(controller.status, ConnectionStatus.error);
       controller.dispose();
@@ -108,7 +138,8 @@ void main() {
       controller.dispose();
     });
 
-    test('heartbeat flips status to error when the TV goes offline', () async {
+    test('heartbeat tracks the TV going offline and back (self-healing)',
+        () async {
       var online = true;
       final client = MockClient((req) async {
         if (!online) throw const SocketException('offline');
@@ -124,6 +155,10 @@ void main() {
       online = false; // TV drops off the network
       await Future<void>.delayed(const Duration(milliseconds: 120));
       expect(controller.status, ConnectionStatus.error);
+
+      online = true; // TV returns — heartbeat must recover on its own
+      await Future<void>.delayed(const Duration(milliseconds: 120));
+      expect(controller.status, ConnectionStatus.connected);
       controller.dispose();
     });
   });

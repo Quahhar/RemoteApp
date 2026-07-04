@@ -34,34 +34,39 @@ class AtvMessages {
   // --- Pairing (PairingMessage: protocol_version=1, status=2) ----------------
 
   static Uint8List pairingRequest(String clientName) {
-    final req = (ProtoWriter()
-          ..string(1, 'androidtv-remote') // service_name
-          ..string(2, clientName)) // client_name
-        .toBytes();
+    final req =
+        (ProtoWriter()
+              ..string(1, 'androidtv-remote') // service_name
+              ..string(2, clientName)) // client_name
+            .toBytes();
     return _pairingEnvelope(10, req);
   }
 
   static Uint8List pairingOption() {
-    final encoding = (ProtoWriter()
-          ..int32(1, 3) // type = HEXADECIMAL
-          ..int32(2, 6)) // symbol_length
-        .toBytes();
-    final option = (ProtoWriter()
-          ..message(1, encoding) // input_encodings (repeated; one entry)
-          ..int32(3, 1)) // preferred_role = INPUT
-        .toBytes();
+    final encoding =
+        (ProtoWriter()
+              ..int32(1, 3) // type = HEXADECIMAL
+              ..int32(2, 6)) // symbol_length
+            .toBytes();
+    final option =
+        (ProtoWriter()
+              ..message(1, encoding) // input_encodings (repeated; one entry)
+              ..int32(3, 1)) // preferred_role = INPUT
+            .toBytes();
     return _pairingEnvelope(20, option);
   }
 
   static Uint8List pairingConfiguration() {
-    final encoding = (ProtoWriter()
-          ..int32(1, 3)
-          ..int32(2, 6))
-        .toBytes();
-    final config = (ProtoWriter()
-          ..message(1, encoding) // encoding
-          ..int32(2, 1)) // client_role = INPUT
-        .toBytes();
+    final encoding =
+        (ProtoWriter()
+              ..int32(1, 3)
+              ..int32(2, 6))
+            .toBytes();
+    final config =
+        (ProtoWriter()
+              ..message(1, encoding) // encoding
+              ..int32(2, 1)) // client_role = INPUT
+            .toBytes();
     return _pairingEnvelope(30, config);
   }
 
@@ -99,18 +104,20 @@ class AtvMessages {
   // --- Remote (RemoteMessage) ------------------------------------------------
 
   static Uint8List remoteConfigure() {
-    final deviceInfo = (ProtoWriter()
-          ..string(1, 'Remote') // model
-          ..string(2, 'Flutter') // vendor
-          ..int32(3, 1) // unknown1
-          ..int32(4, 1) // unknown2
-          ..string(5, 'com.remote.app') // package_name
-          ..string(6, '1.0.0')) // app_version
-        .toBytes();
-    final configure = (ProtoWriter()
-          ..int32(1, _deviceId) // code1
-          ..message(2, deviceInfo))
-        .toBytes();
+    final deviceInfo =
+        (ProtoWriter()
+              ..string(1, 'Omnix') // model
+              ..string(2, 'Flutter') // vendor
+              ..int32(3, 1) // unknown1
+              ..int32(4, 1) // unknown2
+              ..string(5, 'com.remote.app') // package_name
+              ..string(6, '1.0.0')) // app_version
+            .toBytes();
+    final configure =
+        (ProtoWriter()
+              ..int32(1, _deviceId) // code1
+              ..message(2, deviceInfo))
+            .toBytes();
     return (ProtoWriter()..message(1, configure)).toBytes(); // remote_configure
   }
 
@@ -124,12 +131,21 @@ class AtvMessages {
     return (ProtoWriter()..message(9, ping)).toBytes(); // remote_ping_response
   }
 
-  static Uint8List remoteKeyInject(int keyCode, {int direction = directionShort}) {
-    final inject = (ProtoWriter()
-          ..int32(1, keyCode) // key_code
-          ..int32(2, direction)) // direction
-        .toBytes();
+  static Uint8List remoteKeyInject(
+    int keyCode, {
+    int direction = directionShort,
+  }) {
+    final inject =
+        (ProtoWriter()
+              ..int32(1, keyCode) // key_code
+              ..int32(2, direction)) // direction
+            .toBytes();
     return (ProtoWriter()..message(10, inject)).toBytes(); // remote_key_inject
+  }
+
+  static Uint8List remoteTextInject(String text) {
+    final inject = (ProtoWriter()..string(1, text)).toBytes();
+    return (ProtoWriter()..message(11, inject)).toBytes(); // remote_text_inject
   }
 
   static RemoteIncoming parseRemote(Uint8List data) {
@@ -138,8 +154,10 @@ class AtvMessages {
     if (f.containsKey(2)) return RemoteIncoming(RemoteType.setActive);
     if (f.containsKey(8)) {
       final sub = parseProto(f[8] as Uint8List);
-      return RemoteIncoming(RemoteType.pingRequest,
-          pingVal1: (sub[1] as int?) ?? 0);
+      return RemoteIncoming(
+        RemoteType.pingRequest,
+        pingVal1: (sub[1] as int?) ?? 0,
+      );
     }
     if (f.containsKey(40)) return RemoteIncoming(RemoteType.start);
     return RemoteIncoming(RemoteType.other);

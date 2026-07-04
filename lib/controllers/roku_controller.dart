@@ -26,10 +26,10 @@ class RokuController extends RemoteController {
     http.Client? client,
     Duration requestTimeout = const Duration(seconds: 4),
     Duration heartbeatInterval = const Duration(seconds: 10),
-  })  : _client = client ?? http.Client(),
-        _ownsClient = client == null,
-        _requestTimeout = requestTimeout,
-        _heartbeatInterval = heartbeatInterval;
+  }) : _client = client ?? http.Client(),
+       _ownsClient = client == null,
+       _requestTimeout = requestTimeout,
+       _heartbeatInterval = heartbeatInterval;
 
   final http.Client _client;
   final bool _ownsClient;
@@ -69,6 +69,16 @@ class RokuController extends RemoteController {
     RemoteKey.channelDown: 'ChannelDown',
     RemoteKey.play: 'Play',
     RemoteKey.pause: 'Play',
+    // Extended keys Roku ECP genuinely supports. The rest of the More-sheet
+    // commands have no ECP equivalent and surface as "not available".
+    RemoteKey.rewind: 'Rev',
+    RemoteKey.fastForward: 'Fwd',
+    RemoteKey.search: 'Search',
+    RemoteKey.inputHdmi1: 'InputHDMI1',
+    RemoteKey.inputHdmi2: 'InputHDMI2',
+    RemoteKey.inputHdmi3: 'InputHDMI3',
+    RemoteKey.inputAv: 'InputAV1',
+    RemoteKey.inputTv: 'InputTuner',
   };
 
   @override
@@ -76,11 +86,11 @@ class RokuController extends RemoteController {
 
   @override
   Capabilities get capabilities => const Capabilities(
-        supportsPointer: false, // Roku ECP has no pointer
-        supportsTextInput: true, // via Lit_ literal-character keypresses
-        channelButtons: true,
-        numberPad: false,
-      );
+    supportsPointer: false, // Roku ECP has no pointer
+    supportsTextInput: true, // via Lit_ literal-character keypresses
+    channelButtons: true,
+    numberPad: false,
+  );
 
   // --- Discovery -------------------------------------------------------------
 
@@ -154,14 +164,14 @@ class RokuController extends RemoteController {
   }
 
   String _mSearch() => const [
-        'M-SEARCH * HTTP/1.1',
-        'HOST: $_ssdpAddress:$_ssdpPort',
-        'MAN: "ssdp:discover"',
-        'ST: $_searchTarget',
-        'MX: 3',
-        '',
-        '',
-      ].join('\r\n');
+    'M-SEARCH * HTTP/1.1',
+    'HOST: $_ssdpAddress:$_ssdpPort',
+    'MAN: "ssdp:discover"',
+    'ST: $_searchTarget',
+    'MX: 3',
+    '',
+    '',
+  ].join('\r\n');
 
   /// Fetch `/query/device-info` to build a named [Device]; on any failure,
   /// still return a usable host-keyed fallback so the user can add it manually.
@@ -173,13 +183,15 @@ class RokuController extends RemoteController {
           .timeout(_requestTimeout);
       if (res.statusCode == 200) {
         final body = res.body;
-        final name = (xmlTag(body, 'user-device-name') ??
-                xmlTag(body, 'friendly-device-name') ??
-                xmlTag(body, 'default-device-name') ??
-                xmlTag(body, 'model-name') ??
-                'Roku')
-            .trim();
-        final id = xmlTag(body, 'udn') ??
+        final name =
+            (xmlTag(body, 'user-device-name') ??
+                    xmlTag(body, 'friendly-device-name') ??
+                    xmlTag(body, 'default-device-name') ??
+                    xmlTag(body, 'model-name') ??
+                    'Roku')
+                .trim();
+        final id =
+            xmlTag(body, 'udn') ??
             xmlTag(body, 'serial-number') ??
             xmlTag(body, 'device-id') ??
             'roku-$host';
@@ -205,45 +217,72 @@ class RokuController extends RemoteController {
 
   // --- Connection ------------------------------------------------------------
 
+  /// Shown when the Roku answers HTTP but refuses control — its "Control by
+  /// mobile apps" setting is off, which no app can work around.
+  static const String controlBlockedMessage =
+      'Your Roku is blocking app control. On the TV, set Settings → System → '
+      'Advanced system settings → Control by mobile apps → Network access '
+      'to "Default", then try again.';
+
   @override
   Future<void> connect(Device device) async {
     emitStatus(ConnectionStatus.connecting);
     _device = device;
-    if (await _reachable(device)) {
+    final code = await _probeStatus(device);
+    if (code == 200) {
       emitStatus(ConnectionStatus.connected);
       _startHeartbeat();
       return;
     }
     emitStatus(ConnectionStatus.error);
+    // The TV answered but refused — that's the mobile-apps setting, not the
+    // network, so tell the user the fix instead of "TV not reachable".
+    if (code != null) throw const RemoteException(controlBlockedMessage);
     throw const NotReachableException();
   }
 
   /// Whether the Roku still answers `/query/device-info`. Used both by [connect]
   /// and the heartbeat.
-  Future<bool> _reachable(Device device) async {
+  Future<bool> _reachable(Device device) async =>
+      await _probeStatus(device) == 200;
+
+  /// GET `/query/device-info` and return the HTTP status code, or null when
+  /// the TV couldn't be reached at all (timeout / refused / no route).
+  Future<int?> _probeStatus(Device device) async {
     try {
       final res = await _client
           .get(_uri(device, '/query/device-info'))
           .timeout(_requestTimeout);
-      return res.statusCode == 200;
+      return res.statusCode;
     } on TimeoutException {
-      return false;
+      return null;
     } on SocketException {
-      return false;
+      return null;
     } on http.ClientException {
-      return false;
+      return null;
     }
   }
 
   void _startHeartbeat() {
     _heartbeat?.cancel();
+    // Self-healing + non-self-cancelling: keep probing while a device is set so
+    // the dot tracks the TV both ways — error when it drops, connected when it
+    // returns. Only emit on a real transition (emitStatus doesn't de-dupe). The
+    // `probing` guard skips a tick if the previous probe is still in flight.
+    var probing = false;
     _heartbeat = Timer.periodic(_heartbeatInterval, (_) async {
       final device = _device;
-      if (device == null) return;
-      if (!await _reachable(device)) {
-        _heartbeat?.cancel();
-        _heartbeat = null;
-        emitStatus(ConnectionStatus.error);
+      if (device == null || probing) return;
+      probing = true;
+      try {
+        final reachable = await _reachable(device);
+        if (reachable && !status.isConnected) {
+          emitStatus(ConnectionStatus.connected);
+        } else if (!reachable && status.isConnected) {
+          emitStatus(ConnectionStatus.error);
+        }
+      } finally {
+        probing = false;
       }
     });
   }
@@ -264,8 +303,9 @@ class RokuController extends RemoteController {
     }
     final name = keyNames[key];
     if (name == null) {
-      // Unreachable in practice — the key map is exhaustive (asserted by tests).
-      throw RemoteException('Unsupported key: ${key.name}');
+      // Extended More-sheet keys Roku ECP can't send. Key-agnostic message so
+      // repeats de-dupe into one SnackBar.
+      throw const RemoteException("That button isn't available on this TV.");
     }
     await _postWithRetry(_uri(device, '/keypress/$name'));
   }
@@ -303,7 +343,12 @@ class RokuController extends RemoteController {
   }
 
   /// POST with one retry on transient transport errors, honoring the timeout.
+  /// Non-2xx responses (including 5xx server errors) are NOT retried — they
+  /// indicate the TV is reachable but rejected the command, so a different
+  /// exception is thrown.
   Future<void> _postWithRetry(Uri uri, {int attempts = 2}) async {
+    // ignore: literal_only_throw_errors
+    Object lastError = const RemoteException('No active Roku device');
     for (var attempt = 0; attempt < attempts; attempt++) {
       try {
         final res = await _client.post(uri).timeout(_requestTimeout);
@@ -311,15 +356,27 @@ class RokuController extends RemoteController {
           if (!status.isConnected) emitStatus(ConnectionStatus.connected);
           return;
         }
-      } on TimeoutException {
-        // retry
-      } on SocketException {
-        // retry
-      } on http.ClientException {
-        // retry
+        // Server returned a non-transient error — don't retry.
+        emitStatus(ConnectionStatus.error);
+        throw RemoteException(
+          res.statusCode == 403
+              ? controlBlockedMessage
+              : 'Roku rejected the command (HTTP ${res.statusCode}).',
+        );
+      } on RemoteException {
+        rethrow; // don't retry explicit failures
+      } on TimeoutException catch (e) {
+        lastError = e;
+      } on SocketException catch (e) {
+        lastError = e;
+      } on http.ClientException catch (e) {
+        lastError = e;
       }
     }
     emitStatus(ConnectionStatus.error);
+    if (lastError is SocketException || lastError is http.ClientException) {
+      throw const NotReachableException();
+    }
     throw const NotReachableException();
   }
 
@@ -339,9 +396,11 @@ class RokuController extends RemoteController {
   /// Case-insensitive; returns null if absent.
   @visibleForTesting
   static String? xmlTag(String xml, String tag) {
-    final match = RegExp('<$tag[^>]*>(.*?)</$tag>',
-            dotAll: true, caseSensitive: false)
-        .firstMatch(xml);
+    final match = RegExp(
+      '<$tag[^>]*>(.*?)</$tag>',
+      dotAll: true,
+      caseSensitive: false,
+    ).firstMatch(xml);
     return match?.group(1);
   }
 
