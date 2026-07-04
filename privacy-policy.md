@@ -1,14 +1,14 @@
-# Privacy Policy — Remote
+# Privacy Policy — Omnix
 
 **Effective date:** July 3, 2026
 
-Remote ("the app") is a universal Wi‑Fi TV remote for Roku, LG webOS, Samsung Tizen, Android TV, and VIDAA televisions, published by Quahhar ("we", "us"). This policy explains what information the app handles and why.
+Omnix ("the app") is a universal Wi‑Fi TV remote for Roku, LG webOS, Samsung Tizen, Android TV, and VIDAA televisions, published by Quahhar ("we", "us"). This policy explains what information the app handles and why.
 
 ## Summary
 
 - The app has **no user accounts** and we run **no servers**. Your remote-control traffic goes directly from your phone to your TV over your local Wi‑Fi network.
 - We do **not** collect, store, or sell your personal data.
-- The free version shows ads through **Google AdMob**, which collects limited device data to serve ads (details below). Buying **Remote Pro** removes ads.
+- The free version shows ads through **Google AdMob**, which collects limited device data to serve ads (details below). Buying **Omnix Pro** removes ads.
 
 ## Information the app uses on your device
 
@@ -29,7 +29,7 @@ The free version uses **Google AdMob** to show ads. AdMob may collect device ide
 - On iOS, the app respects **App Tracking Transparency**: if you decline tracking, ads are non-personalized and the app keeps working fully.
 - You can reset or delete your advertising ID in your device settings at any time.
 
-Purchasing **Remote Pro** (a one-time in-app purchase) removes all ads.
+Purchasing **Omnix Pro** (a one-time in-app purchase) removes all ads.
 
 ## In-app purchases
 
